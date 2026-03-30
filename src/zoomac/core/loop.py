@@ -19,14 +19,16 @@ if TYPE_CHECKING:
 class CoreLoop:
     """Main event loop for the Zoomac agent."""
 
-    def __init__(self, settings: ZoomacSettings) -> None:
+    def __init__(self, settings: ZoomacSettings, model_override=None) -> None:
         self.settings = settings
         self.memory = MemoryManager(
             project_dir=str(settings.project_dir),
             max_tokens=settings.memory_max_tokens,
             top_k=settings.memory_top_k,
         )
-        self.agent: Agent[ZoomacDeps, AgentResponse] = create_agent(settings.model)
+        self.agent: Agent[ZoomacDeps, AgentResponse] = create_agent(
+            model_override or settings.model
+        )
         self.deps = ZoomacDeps(memgate=self.memory)
         self._running = False
 
