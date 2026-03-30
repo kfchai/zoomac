@@ -1,0 +1,3 @@
+[submodule "memgate"]
+	path = memgate
+	url = https://github.com/kfchai/memgate.git
