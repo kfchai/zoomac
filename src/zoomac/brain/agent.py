@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from pydantic_ai import Agent, RunContext
 
+from zoomac.autonomy.policy import AutonomyManager
 from zoomac.brain.memory_extract import AgentResponse
 from zoomac.brain.prompts import SYSTEM_PROMPT
 from zoomac.memory.integration import MemoryManager
@@ -16,6 +17,7 @@ class ZoomacDeps:
     """Dependencies injected into every agent run."""
 
     memgate: MemoryManager
+    autonomy: AutonomyManager | None = None
 
 
 def create_agent(model: str) -> Agent[ZoomacDeps, AgentResponse]:

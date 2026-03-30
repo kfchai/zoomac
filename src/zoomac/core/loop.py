@@ -6,6 +6,7 @@ import asyncio
 import sys
 from typing import TYPE_CHECKING
 
+from zoomac.autonomy.policy import AutonomyManager
 from zoomac.brain.agent import ZoomacDeps, create_agent
 from zoomac.brain.memory_extract import AgentResponse
 from zoomac.core.config import ZoomacSettings
@@ -30,7 +31,12 @@ class CoreLoop:
         self.agent: Agent[ZoomacDeps, AgentResponse] = create_agent(
             model_override or settings.model
         )
-        self.deps = ZoomacDeps(memgate=self.memory)
+        # Autonomy
+        autonomy_path = settings.project_dir / settings.autonomy_config
+        audit_db = settings.project_dir / ".zoomac_audit.db"
+        self.autonomy = AutonomyManager(config_path=autonomy_path, db_path=audit_db)
+
+        self.deps = ZoomacDeps(memgate=self.memory, autonomy=self.autonomy)
         self.queue = EventQueue(settings.project_dir / ".zoomac_events.db")
         self._running = False
 
@@ -193,4 +199,5 @@ class CoreLoop:
         """Graceful shutdown."""
         self._running = False
         self.queue.close()
+        self.autonomy.close()
         self.memory.close()
