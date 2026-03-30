@@ -1,0 +1,30 @@
+# Zoomac Autonomy Configuration
+# Rule cascade: skill override > platform override > action type default
+
+defaults:
+  read_file: allow
+  write_file: allow
+  delete_file: confirm
+  run_command: allow
+  web_search: allow
+  send_message: confirm
+  api_call: confirm
+  git_push: confirm
+  financial: confirm
+  modify_config: confirm
+  memory_query: allow
+  spawn_agent: allow
+
+overrides:
+  skills:
+    # Skills explicitly trusted to run without confirmation
+    # check_btc_price: allow
+    # send_daily_report: allow
+  platforms:
+    # Platform-level overrides
+    # discord: allow
+    # whatsapp: confirm
+
+timeout:
+  confirm_wait_minutes: 30
+  on_timeout: expire  # "expire" or "escalate"
