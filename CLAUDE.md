@@ -33,7 +33,13 @@ zoomac/
 │   ├── autonomy/
 │   │   ├── classifier.py       # RiskClassifier (12 action types, cascade: skill > platform > default)
 │   │   └── policy.py           # AutonomyManager (YAML config, SQLite audit log)
-│   ├── gateway/                # Placeholder — Phase 5
+│   ├── sandbox/
+│   │   ├── profiles.py         # 4 permission profiles (minimal/standard/project/full)
+│   │   └── docker.py           # SandboxManager (container pool, execute, cleanup)
+│   ├── gateway/
+│   │   ├── adapter.py          # PlatformAdapter ABC, NormalizedMessage, OutboundMessage
+│   │   ├── gateway.py          # Gateway multiplexer (multi-adapter → event queue)
+│   │   └── telegram.py         # Telegram adapter (aiogram 3.x, long-polling)
 │   ├── agents/                 # Placeholder — Phase 7
 │   ├── sandbox/                # Placeholder — Phase 4
 │   ├── scheduler/              # Placeholder — Phase 9
@@ -42,7 +48,8 @@ zoomac/
 ├── config/
 │   └── autonomy.yaml           # Risk/permission defaults
 ├── docs/design/                # 15 design documents (architecture, decisions, implementation plan)
-├── tests/                      # 56 passing tests
+├── Dockerfile                  # Sandbox base image (Python 3.11 + Node.js + tools)
+├── tests/                      # 93 passing tests
 ├── pyproject.toml
 └── .gitignore
 ```
@@ -104,9 +111,9 @@ Gateway (inbound) → Core Loop → Pydantic AI (LLM + tools)
 | 1: Memory Integration | ✅ Done | 17 | MemGate wrapper, search/facts tools, ingest flow |
 | 2: Core Loop & Events | ✅ Done | 14 | SQLite event queue, priority ordering, crash recovery, dead letter |
 | 3: Autonomy Manager | ✅ Done | 14 | Risk classifier, YAML config, audit log |
-| 4: Sandbox (Docker) | ⏳ Next | — | Container pool, permission profiles, resource limits |
-| 5: Gateway — Telegram | Planned | — | Abstract adapter, Telegram via aiogram |
-| 6: Gateway — WA + Discord | Planned | — | WhatsApp + Discord adapters |
+| 4: Sandbox (Docker) | ✅ Done | 20 | Container pool, 4 permission profiles, Dockerfile, resource limits |
+| 5: Gateway — Telegram | ✅ Done | 17 | Abstract adapter, gateway multiplexer, Telegram via aiogram |
+| 6: Gateway — WA + Discord | ⏳ Next | — | WhatsApp + Discord adapters |
 | 7: Sub-Agents | Planned | — | Isolated memory, lifecycle, message bus |
 | 8: Skill System | Planned | — | Registry, learning, cross-referencing |
 | 9: Scheduler | Planned | — | APScheduler, cron/event/condition triggers |
@@ -114,7 +121,7 @@ Gateway (inbound) → Core Loop → Pydantic AI (LLM + tools)
 | 11: Anti-Hallucination | Planned | — | 6-layer defense in depth |
 | 12: Resilience & Polish | Planned | — | Circuit breakers, fallback chains, health monitoring |
 
-**Total: 56 tests passing**
+**Total: 93 tests passing**
 
 ## Branch
 
