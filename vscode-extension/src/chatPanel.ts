@@ -112,6 +112,10 @@ export class ChatPanel {
         this._updateTitle(data.content || "Image");
         (this._backend as any).sendMessageWithImages?.(data.content, data.images)
           || this._backend.sendMessage(data.content);
+      } else if (data.type === "new_session") {
+        ChatPanel.openNew(this._extensionUri);
+      } else if (data.type === "browse_sessions") {
+        ChatPanel.showSessionPicker(this._extensionUri);
       } else if (data.type === "send" && data.content) {
         this._updateTitle(data.content);
         this._backend?.sendMessage(data.content);
@@ -273,11 +277,12 @@ export class ChatPanel {
 
   private _updateTitle(firstMessage: string) {
     if (this._messages.length === 0) {
-      // First message — use it as the panel/session title
       const title = firstMessage.length > 40
         ? firstMessage.substring(0, 40) + "…"
         : firstMessage;
       this._panel.title = title;
+      // Update the top bar title in the webview
+      this._postToWebview({ type: "update_title", title });
     }
   }
 
@@ -420,6 +425,12 @@ export class ChatPanel {
   <link rel="stylesheet" href="${cssUri}">
 </head>
 <body data-session-id="${this._sessionId}">
+  <div id="top-bar">
+    <button id="btn-new-session" title="New session">+</button>
+    <div id="session-title">${(this._messages.length > 0 ? "Session" : "New Session")}</div>
+    <div class="spacer"></div>
+    <button id="btn-sessions" title="Browse sessions">&#x1f4cb;</button>
+  </div>
   <div id="messages"></div>
   <div id="input-area">
     <div id="input-row">

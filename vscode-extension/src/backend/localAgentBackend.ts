@@ -55,9 +55,12 @@ export class LocalAgentBackend implements Backend {
     this._model = config.model;
     this._maxTokens = config.maxTokens;
     // Use a project-scoped, isolated memory directory
-    const path = require("path");
-    const memoryDir = path.join(workspaceRoot, ".zoomac", "memory");
-    this._memoryBridge = new MemoryBridge({ projectDir: memoryDir });
+    const pathMod = require("path");
+    const memoryDir = pathMod.join(workspaceRoot, ".zoomac", "memory");
+    this._memoryBridge = new MemoryBridge({
+      projectDir: memoryDir,
+      workspaceRoot,
+    });
     this._toolHandlers = createToolHandlers(workspaceRoot, this._memoryBridge);
   }
 
@@ -65,20 +68,23 @@ export class LocalAgentBackend implements Backend {
     // Load system prompt (reads ZOOMAC.md / CLAUDE.md / AGENTS.md)
     this._baseSystemPrompt = await buildSystemPrompt(this._workspaceRoot);
 
-    // Check if MemGate is available
-    this._memoryAvailable = await this._memoryBridge.isAvailable();
-    const memStatus = this._memoryAvailable ? " · memory on" : "";
-    console.log(`[LocalAgent] started, memory available: ${this._memoryAvailable}`);
+    // Initialize memory — tries daemon, subprocess, then MEMORY.md fallback
+    const memBackend = await this._memoryBridge.init();
+    this._memoryAvailable = true; // Always available now (MEMORY.md fallback)
+    const memLabel = memBackend === "daemon" ? "memory (memgate)" :
+                     memBackend === "subprocess" ? "memory (memgate)" :
+                     "memory (MEMORY.md)";
 
     this._emitter.fire({
       type: "status",
-      content: `Local (${this._model}${memStatus})`,
+      content: `Local (${this._model}) · ${memLabel}`,
     });
   }
 
   async stop(): Promise<void> {
     this._abortController?.abort();
     this._abortController = undefined;
+    this._memoryBridge.dispose();
     // Reject all pending confirmations
     for (const [, resolve] of this._pendingConfirmations) {
       resolve(false);

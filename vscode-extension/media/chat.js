@@ -42,20 +42,38 @@
   // Skip transient message types that can't be replayed properly
   const SKIP_ON_REPLAY = new Set(["text_delta", "context_usage", "spinner", "status", "confirm_tool"]);
 
-  function replayHistory() {
-    // Clean stale message types from old sessions before replaying
-    const clean = chatHistory.filter((m) => m && !SKIP_ON_REPLAY.has(m.type));
-    if (clean.length !== chatHistory.length) {
-      chatHistory = clean;
-      vscode.setState({ chatHistory, sessionId });
+  /** Migrate old history: merge text_delta runs into agent messages, skip transient types */
+  function migrateHistory(msgs) {
+    const out = [];
+    let deltaBuffer = "";
+    for (const msg of msgs) {
+      if (!msg) continue;
+      if (msg.type === "text_delta") {
+        if (msg.text) deltaBuffer += msg.text;
+        continue;
+      }
+      if (deltaBuffer.trim()) {
+        out.push({ type: "agent", content: deltaBuffer.trim() });
+        deltaBuffer = "";
+      }
+      if (SKIP_ON_REPLAY.has(msg.type)) continue;
+      out.push(msg);
     }
+    if (deltaBuffer.trim()) {
+      out.push({ type: "agent", content: deltaBuffer.trim() });
+    }
+    return out;
+  }
+
+  function replayHistory() {
+    chatHistory = migrateHistory(chatHistory);
+    vscode.setState({ chatHistory, sessionId });
 
     for (let i = 0; i < chatHistory.length; i++) {
-      const msg = chatHistory[i];
       try {
-        handleMessage(msg, /* skipSave */ true);
+        handleMessage(chatHistory[i], /* skipSave */ true);
       } catch (e) {
-        console.warn("[zoomac] replay crash at msg", i, msg?.type, e);
+        console.warn("[zoomac] replay crash at msg", i, chatHistory[i]?.type, e);
       }
     }
   }
@@ -109,8 +127,8 @@
         updateContextPie(data.used, data.max, data.percent);
         break;
       case "restore_session":
-        // Restore a previous session — clean stale types first
-        chatHistory = (data.messages || []).filter((m) => m && !SKIP_ON_REPLAY.has(m?.type));
+        // Restore — migrate text_deltas into agent messages
+        chatHistory = migrateHistory(data.messages || []);
         vscode.setState({ chatHistory, sessionId });
         messagesEl.innerHTML = "";
         todoBlockEl = null;
@@ -124,6 +142,10 @@
             console.warn("[zoomac] restore crash at msg", ri, chatHistory[ri]?.type, e);
           }
         }
+        break;
+      case "update_title":
+        const titleEl = document.getElementById("session-title");
+        if (titleEl) titleEl.textContent = data.title || "Session";
         break;
       case "error":
         clearSpinner();
@@ -413,12 +435,8 @@
   let liveTextContent = "";
 
   function appendTextDelta(text) {
-    // Empty string = finalize the live element and save as agent message
+    // Empty string = finalize the live element (finalizeLiveText saves to history)
     if (text === "") {
-      if (liveTextContent.trim()) {
-        // Save the finalized text as an "agent" message so it survives replay
-        recordMessage({ type: "agent", content: liveTextContent.trim() });
-      }
       finalizeLiveText();
       return;
     }
@@ -485,16 +503,19 @@
     scrollToBottom();
   }
 
-  /** Finalize any in-progress streaming text element — collapse into a preview */
+  /** Finalize any in-progress streaming text element */
   function finalizeLiveText() {
     if (!liveTextEl) return;
 
     const content = liveTextContent.trim();
-    liveTextEl.remove(); // Remove the raw streaming element
+    liveTextEl.remove();
     liveTextEl = null;
     liveTextContent = "";
 
     if (!content) return;
+
+    // Save the finalized text as an agent message for replay persistence
+    recordMessage({ type: "agent", content });
 
     // Show as full rendered markdown on the tree line
     const wrapper = document.createElement("div");
@@ -504,7 +525,6 @@
     textEl.className = "msg-agent-content";
     textEl.innerHTML = renderMarkdown(content);
 
-    wrapper.appendChild(dot);
     wrapper.appendChild(textEl);
     messagesEl.appendChild(wrapper);
     scrollToBottom();
@@ -1343,6 +1363,21 @@
   if (stopBtn) {
     stopBtn.addEventListener("click", () => {
       vscode.postMessage({ type: "stop" });
+    });
+  }
+
+  // ===== Top bar buttons =====
+  const newSessionBtn = document.getElementById("btn-new-session");
+  if (newSessionBtn) {
+    newSessionBtn.addEventListener("click", () => {
+      vscode.postMessage({ type: "new_session" });
+    });
+  }
+
+  const sessionsBtn = document.getElementById("btn-sessions");
+  if (sessionsBtn) {
+    sessionsBtn.addEventListener("click", () => {
+      vscode.postMessage({ type: "browse_sessions" });
     });
   }
 
