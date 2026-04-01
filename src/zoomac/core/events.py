@@ -22,6 +22,7 @@ class EventSource(str, Enum):
     WHATSAPP = "whatsapp"
     DISCORD = "discord"
     SCHEDULER = "scheduler"
+    VSCODE = "vscode"
     INTERNAL = "internal"
     SYSTEM = "system"
 
@@ -53,6 +54,7 @@ class ScheduleEvent(Event):
     job_name: str = ""
     task: str = ""
     spawn_agent: bool = False
+    metadata: dict = Field(default_factory=dict)
 
 
 class SystemEvent(Event):
@@ -60,4 +62,14 @@ class SystemEvent(Event):
 
     source: EventSource = EventSource.SYSTEM
     event_type: str = ""  # "health_check", "error", "alert"
+    detail: str = ""
+
+
+class GoalEvent(Event):
+    """Internal event for goal lifecycle updates."""
+
+    source: EventSource = EventSource.INTERNAL
+    goal_id: str = ""
+    event_type: str = ""  # "task_completed", "task_blocked", "goal_done", "goal_failed"
+    task_id: str | None = None
     detail: str = ""

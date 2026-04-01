@@ -19,6 +19,9 @@ from zoomac.sandbox.docker import (
     ExecutionResult,
     SandboxManager,
 )
+from zoomac.sandbox.policy import SandboxExecutionIntent, SandboxPolicyResolver
+from zoomac.autonomy.classifier import ActionClassification, ActionType, RiskLevel
+from zoomac.autonomy.pipeline import ApprovalDecision, ApprovalMode, ApprovalOutcome
 
 
 # --- Profile tests ---
@@ -79,6 +82,13 @@ def test_full_profile_with_home():
     bind_mounts = [m for m in p.mounts if m.get("type") == "bind"]
     assert len(bind_mounts) == 1
     assert bind_mounts[0]["source"] == "/home/user"
+    assert bind_mounts[0]["mode"] == "rw"
+
+
+def test_project_profile_can_be_rw():
+    """Project profile mount mode is configurable for policy resolution."""
+    p = get_profile(ProfileName.PROJECT, project_dir="/home/user/project", project_mode="rw")
+    bind_mounts = [m for m in p.mounts if m.get("type") == "bind"]
     assert bind_mounts[0]["mode"] == "rw"
 
 
@@ -215,3 +225,154 @@ def test_sandbox_manager_list_containers_empty():
     """list_containers returns empty list initially."""
     mgr = SandboxManager()
     assert mgr.list_containers() == []
+
+
+def test_policy_resolver_minimal_for_inspect():
+    resolver = SandboxPolicyResolver(project_dir="/repo", home_dir="/home/user")
+    policy = resolver.resolve(
+        SandboxExecutionIntent(command_text="ls -la")
+    )
+    assert policy.profile_name == ProfileName.MINIMAL
+    assert policy.requires_approval is False
+
+
+def test_policy_resolver_standard_for_network():
+    resolver = SandboxPolicyResolver(project_dir="/repo", home_dir="/home/user")
+    policy = resolver.resolve(
+        SandboxExecutionIntent(
+            command_text="pip install requests",
+            requires_network=True,
+        )
+    )
+    assert policy.profile_name == ProfileName.STANDARD
+
+
+def test_policy_resolver_project_rw_for_project_write():
+    resolver = SandboxPolicyResolver(project_dir="/repo", home_dir="/home/user")
+    policy = resolver.resolve(
+        SandboxExecutionIntent(
+            command_text="pytest",
+            writes_project=True,
+        )
+    )
+    assert policy.profile_name == ProfileName.PROJECT
+    assert policy.project_mount_mode == "rw"
+    bind_mounts = [m for m in policy.profile.mounts if m.get("type") == "bind"]
+    assert bind_mounts[0]["mode"] == "rw"
+
+
+def test_policy_resolver_full_for_network_plus_write():
+    resolver = SandboxPolicyResolver(project_dir="/repo", home_dir="/home/user")
+    policy = resolver.resolve(
+        SandboxExecutionIntent(
+            command_text="npm install",
+            requires_network=True,
+            writes_project=True,
+        )
+    )
+    assert policy.profile_name == ProfileName.FULL
+    assert policy.requires_approval is True
+
+
+def test_policy_resolver_approval_clears_elevated_flag():
+    resolver = SandboxPolicyResolver(project_dir="/repo", home_dir="/home/user")
+    approval = ApprovalDecision(
+        action_type=ActionType.RUN_COMMAND,
+        outcome=ApprovalOutcome.ALLOW,
+        mode=ApprovalMode.ALLOW_FOR_SESSION,
+        reason="Allowed by session rule",
+        provenance="rule:session:cli:cli",
+        classification=ActionClassification(
+            action_type=ActionType.RUN_COMMAND,
+            risk=RiskLevel.HIGH,
+            reason="High-risk command",
+            requires_confirmation=True,
+            matched_rule="action:run_command",
+        ),
+    )
+    policy = resolver.resolve(
+        SandboxExecutionIntent(
+            command_text="npm install",
+            requires_network=True,
+            writes_project=True,
+        ),
+        approval=approval,
+    )
+    assert policy.profile_name == ProfileName.FULL
+    assert policy.requires_approval is False
+    assert policy.execution_allowed is True
+    assert policy.approval_outcome == "allow"
+    assert any("Approval already granted" in reason for reason in policy.audit_reasons)
+
+
+def test_policy_resolver_denied_approval_blocks_execution():
+    resolver = SandboxPolicyResolver(project_dir="/repo", home_dir="/home/user")
+    approval = ApprovalDecision(
+        action_type=ActionType.RUN_COMMAND,
+        outcome=ApprovalOutcome.DENY,
+        mode=ApprovalMode.DENY,
+        reason="Denied by stored rule",
+        provenance="rule:command_prefix:rm -rf",
+        classification=ActionClassification(
+            action_type=ActionType.RUN_COMMAND,
+            risk=RiskLevel.HIGH,
+            reason="High-risk command",
+            requires_confirmation=True,
+            matched_rule="action:run_command",
+        ),
+    )
+    policy = resolver.resolve(
+        SandboxExecutionIntent(
+            command_text="rm -rf build",
+            requires_network=True,
+            writes_project=True,
+        ),
+        approval=approval,
+    )
+    assert policy.profile_name == ProfileName.FULL
+    assert policy.execution_allowed is False
+    assert policy.requires_approval is False
+    assert any("denied by approval pipeline" in reason.lower() for reason in policy.audit_reasons)
+
+
+def test_policy_resolver_mounts_allowed_paths_read_only():
+    resolver = SandboxPolicyResolver(project_dir="/repo", home_dir="/home/user")
+    policy = resolver.resolve(
+        SandboxExecutionIntent(
+            command_text="pytest tests",
+            reads_project=True,
+            allowed_paths=["/tmp/cache", "/tmp/cache", "/var/data"],
+        )
+    )
+    bind_mounts = [m for m in policy.profile.mounts if m.get("type") == "bind"]
+    context_mounts = [m for m in bind_mounts if m["target"].startswith("/context/path-")]
+    assert len(context_mounts) == 2
+    assert all(m["mode"] == "ro" for m in context_mounts)
+    assert len(policy.normalized_allowed_paths) == 2
+    assert any("extra path" in reason.lower() for reason in policy.audit_reasons)
+
+
+def test_policy_normalizes_paths():
+    normalized = SandboxPolicyResolver.normalize_path(r"D:\Repo\src\..\tests")
+    assert normalized.endswith("/repo/tests")
+
+
+def test_sandbox_manager_resolve_execution_policy():
+    mgr = SandboxManager(project_dir="/repo", home_dir="/home/user")
+    policy = mgr.resolve_execution_policy(
+        "pytest",
+        writes_project=True,
+    )
+    assert policy.profile_name == ProfileName.PROJECT
+
+
+def test_sandbox_manager_resolve_execution_policy_with_allowed_paths():
+    mgr = SandboxManager(project_dir="/repo", home_dir="/home/user")
+    policy = mgr.resolve_execution_policy(
+        "pytest",
+        reads_project=True,
+        allowed_paths=["/var/tmp/test-cache"],
+    )
+    bind_mounts = [m for m in policy.profile.mounts if m.get("type") == "bind"]
+    assert any(m["target"] == "/project" for m in bind_mounts)
+    assert any(m["target"].startswith("/context/path-") for m in bind_mounts)

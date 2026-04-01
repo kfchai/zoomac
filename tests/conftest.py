@@ -1,6 +1,8 @@
 """Shared test fixtures for Zoomac."""
 
+import shutil
 import sys
+import uuid
 from pathlib import Path
 from unittest.mock import patch
 
@@ -54,6 +56,18 @@ def _patch_embedder():
     with patch("memgate.engine.Embedder", FakeEmbedder):
         with patch("memgate.embedder.Embedder", FakeEmbedder):
             yield
+
+
+@pytest.fixture
+def tmp_path():
+    """Workspace-local tmp_path replacement for Windows sandbox compatibility."""
+    base_dir = Path(__file__).resolve().parent.parent
+    path = base_dir / f"pytest-tmp-{uuid.uuid4().hex[:8]}"
+    path.mkdir(parents=True, exist_ok=False)
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path, ignore_errors=True)
 
 
 @pytest.fixture

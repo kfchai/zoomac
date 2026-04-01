@@ -29,3 +29,24 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+ignore_this.txt
+
+# Temp/probe files
+a
+temp_py/
+.tmp/
+pytest-tmp-*/
+manualtmp-*/
+runner_check/
+sqlite-probe*.db
+root-new.db
+root-new.db-journal
+.memgate.db-journal
+
+# Zoomac runtime
+.zoomac/
+
+# VS Code extension build artifacts
+vscode-extension/out/
+vscode-extension/node_modules/
+vscode-extension/*.vsix

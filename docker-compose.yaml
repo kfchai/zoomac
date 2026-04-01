@@ -1,0 +1,18 @@
+services:
+  zoomac-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    ports:
+      - "${ZOOMAC_WS_PORT:-8765}:8765"
+    volumes:
+      - ${PROJECT_DIR:-.}:/project
+    environment:
+      - ZOOMAC_PROJECT_DIR=/project
+      - ZOOMAC_WS_HOST=0.0.0.0
+      - ZOOMAC_WS_PORT=8765
+      - ZOOMAC_MODEL=${ZOOMAC_MODEL:-anthropic:claude-sonnet-4-20250514}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - ZOOMAC_SECRET_KEY=${ZOOMAC_SECRET_KEY:-}
+    working_dir: /project
+    restart: unless-stopped

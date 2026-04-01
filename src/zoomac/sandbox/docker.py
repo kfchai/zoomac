@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
+from zoomac.autonomy.pipeline import ApprovalDecision
+from zoomac.sandbox.policy import SandboxExecutionIntent, SandboxPolicyResolver
 from zoomac.sandbox.profiles import ProfileName, SandboxProfile, get_profile
 
 
@@ -65,6 +67,7 @@ class SandboxManager:
         self._home_dir = home_dir
         self._client: Any | None = None  # docker.DockerClient (lazy)
         self._containers: dict[str, ContainerInfo] = {}
+        self._policy = SandboxPolicyResolver(project_dir=project_dir, home_dir=home_dir)
 
     @property
     def client(self) -> Any:
@@ -141,6 +144,28 @@ class SandboxManager:
             profile,
             effective_timeout,
         )
+
+    def resolve_execution_policy(
+        self,
+        command: str,
+        *,
+        requested_profile: ProfileName | str | None = None,
+        requires_network: bool = False,
+        reads_project: bool = False,
+        writes_project: bool = False,
+        allowed_paths: list[str] | None = None,
+        approval: ApprovalDecision | None = None,
+    ):
+        """Resolve the effective sandbox policy for a command."""
+        intent = SandboxExecutionIntent(
+            command_text=command,
+            requested_profile=requested_profile,
+            requires_network=requires_network,
+            reads_project=reads_project,
+            writes_project=writes_project,
+            allowed_paths=allowed_paths or [],
+        )
+        return self._policy.resolve(intent, approval=approval)
 
     def _execute_sync(
         self,

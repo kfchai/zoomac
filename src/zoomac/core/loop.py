@@ -3,69 +3,209 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import sys
-from typing import TYPE_CHECKING
 
 from zoomac.autonomy.policy import AutonomyManager
-from zoomac.brain.agent import ZoomacDeps, create_agent
-from zoomac.brain.memory_extract import AgentResponse
+from zoomac.agents.manager import SubAgentManager
+from zoomac.brain.deps import ZoomacDeps
+from zoomac.brain.provider import DefaultRuntimeProvider, RuntimeProvider
 from zoomac.core.config import ZoomacSettings
 from zoomac.core.events import Event, EventSource, MessageEvent, ScheduleEvent, SystemEvent
 from zoomac.core.queue import EventQueue
+from zoomac.core.runner import ConversationRunner
 from zoomac.memory.integration import MemoryManager
+from zoomac.planner.credentials import CredentialVault
+from zoomac.planner.engine import GoalEngine
+from zoomac.planner.store import GoalStore
+from zoomac.scheduler import SchedulerService
+from zoomac.skills.loader import load_builtin_skill_registry
 
-if TYPE_CHECKING:
-    from pydantic_ai import Agent
+logger = logging.getLogger(__name__)
+
+GOAL_PREFIX = "/goal "
+
+
+def _is_goal_instruction(text: str) -> bool:
+    """Check if a message is a goal instruction."""
+    return text.strip().lower().startswith(GOAL_PREFIX)
 
 
 class CoreLoop:
     """Main event loop for the Zoomac agent."""
 
-    def __init__(self, settings: ZoomacSettings, model_override=None) -> None:
+    def __init__(
+        self,
+        settings: ZoomacSettings,
+        model_override=None,
+        runtime_provider: RuntimeProvider | None = None,
+    ) -> None:
         self.settings = settings
         self.memory = MemoryManager(
             project_dir=str(settings.project_dir),
             max_tokens=settings.memory_max_tokens,
             top_k=settings.memory_top_k,
         )
-        self.agent: Agent[ZoomacDeps, AgentResponse] = create_agent(
-            model_override or settings.model
+        self.runtime_provider = runtime_provider or DefaultRuntimeProvider()
+        self.skill_registry = load_builtin_skill_registry()
+        runtime_bundle = self.runtime_provider.build(
+            model_override or settings.model,
+            skill_registry=self.skill_registry,
+        )
+        self.conversation_runtime = runtime_bundle.conversation_runtime
+        self.runner = ConversationRunner(runtime=self.conversation_runtime, memory=self.memory)
+        self.planner_runtime = runtime_bundle.planner_runtime
+        self.agent_manager = SubAgentManager(
+            planner_runtime=self.planner_runtime,
+            max_agents=settings.max_sub_agents,
         )
         # Autonomy
         autonomy_path = settings.project_dir / settings.autonomy_config
         audit_db = settings.project_dir / ".zoomac_audit.db"
         self.autonomy = AutonomyManager(config_path=autonomy_path, db_path=audit_db)
 
-        self.deps = ZoomacDeps(memgate=self.memory, autonomy=self.autonomy)
+        # Goal planner
+        self._goal_store = GoalStore(settings.project_dir / ".zoomac_goals.db")
+        self._vault = CredentialVault(self._goal_store, encryption_key=settings.secret_key)
+        self._goal_engine = GoalEngine(
+            store=self._goal_store,
+            planner_runtime=self.planner_runtime,
+            autonomy=self.autonomy,
+            agent_manager=self.agent_manager,
+            skill_registry=self.skill_registry,
+            memory=self.memory,
+            credential_vault=self._vault,
+            project_dir=str(settings.project_dir),
+        )
+
+        self.deps = ZoomacDeps(
+            memgate=self.memory,
+            autonomy=self.autonomy,
+            goal_engine=self._goal_engine,
+        )
         self.queue = EventQueue(settings.project_dir / ".zoomac_events.db")
+        self.scheduler = SchedulerService(self.queue)
+        self.scheduler.register_default_jobs()
+        self.gateway = None  # Set by run_server() for outbound routing
         self._running = False
+        self._goal_tasks: dict[str, asyncio.Task] = {}
+        self._scheduler_started = False
 
     async def handle_message(self, event: MessageEvent) -> str:
         """Process a single message event through the agent."""
-        result = await self.agent.run(event.content, deps=self.deps)
-        response: AgentResponse = result.output
-
-        # Ingest memory if worth remembering
-        if response.memory.worth_remembering and response.memory.content:
-            payload = response.memory.to_memgate_payload()
-            self.memory.ingest_structured(payload)
-
+        conversation_id = f"{event.source.value}:{event.channel}"
+        response = await self.runner.run_message(
+            event.content,
+            deps=self.deps,
+            conversation_id=conversation_id,
+        )
         return response.message
 
     async def handle_event(self, event: Event) -> str | None:
         """Route an event to the appropriate handler."""
         if isinstance(event, MessageEvent):
+            # Handle /status command from any platform
+            if event.content.strip() == "/status":
+                import json
+                mem_status = self.memory.status()
+                return json.dumps({
+                    "memories": mem_status.get("n_memories", 0),
+                    "ingested": mem_status.get("total_ingested", 0),
+                    "pending": self.queue.pending_count(),
+                    "dead_letters": self.queue.dead_letter_count(),
+                    "active_goals": len(self._goal_tasks),
+                })
+
+            # Check if this is input for a blocked goal
+            blocked = self._goal_store.find_blocked_goal(
+                source=event.source.value, channel=event.channel
+            )
+            if blocked:
+                reply = await self._goal_engine.handle_user_input(blocked.id, event.content)
+                # Resume goal execution in background
+                if blocked.id not in self._goal_tasks:
+                    self._goal_tasks[blocked.id] = asyncio.create_task(
+                        self._run_goal_background(blocked.id)
+                    )
+                return reply
+
+            # Check if this is a goal instruction
+            if _is_goal_instruction(event.content):
+                instruction = event.content[len(GOAL_PREFIX):].strip()
+                return await self._start_goal(instruction, event.source.value, event.channel)
+
             return await self.handle_message(event)
         elif isinstance(event, ScheduleEvent):
-            # Placeholder — will be implemented in Phase 9
-            return f"[scheduler] {event.job_name}: {event.task}"
+            return await self.handle_schedule(event)
         elif isinstance(event, SystemEvent):
             return f"[system] {event.event_type}: {event.detail}"
         return None
 
+    async def handle_schedule(self, event: ScheduleEvent) -> str:
+        """Process a scheduled maintenance or delegated background job."""
+        if event.spawn_agent or event.metadata.get("goal_instruction"):
+            instruction = str(event.metadata.get("goal_instruction") or event.task).strip()
+            goal = await self._goal_engine.create_goal(
+                instruction,
+                source=EventSource.SCHEDULER.value,
+                channel=event.job_name,
+            )
+            self._goal_tasks[goal.id] = asyncio.create_task(
+                self._run_goal_background(goal.id)
+            )
+            return f"[scheduler] goal queued: {goal.id}"
+
+        if event.task == "memory_consolidate":
+            consolidated = self.memory.consolidate()
+            return f"[scheduler] memory consolidated: {len(consolidated)} item(s)"
+
+        if event.task == "health_check":
+            mem_status = self.memory.status()
+            return json.dumps(
+                {
+                    "job": event.job_name,
+                    "pending": self.queue.pending_count(),
+                    "dead_letters": self.queue.dead_letter_count(),
+                    "active_goals": len(self._goal_tasks),
+                    "memories": mem_status.get("n_memories", 0),
+                }
+            )
+
+        if event.task == "retry_dead_letters":
+            replayed = self.queue.replay_all_dead_letters()
+            return f"[scheduler] replayed {replayed} dead-letter event(s)"
+
+        return f"[scheduler] {event.job_name}: {event.task}"
+
+    async def _start_goal(self, instruction: str, source: str, channel: str) -> str:
+        """Create and start executing a goal."""
+        try:
+            goal = await self._goal_engine.create_goal(instruction, source, channel)
+            # Run in background
+            self._goal_tasks[goal.id] = asyncio.create_task(
+                self._run_goal_background(goal.id)
+            )
+            return f"Goal accepted ({len(goal.tasks)} tasks planned). Working on: {instruction[:80]}"
+        except Exception as e:
+            logger.exception("Failed to create goal")
+            return f"Failed to plan goal: {e}"
+
+    async def _run_goal_background(self, goal_id: str) -> None:
+        """Run a goal to completion in the background."""
+        try:
+            goal = await self._goal_engine.run_goal(goal_id)
+            if goal:
+                logger.info("Goal %s finished with status: %s", goal_id, goal.status.value)
+        except Exception:
+            logger.exception("Background goal %s failed", goal_id)
+        finally:
+            self._goal_tasks.pop(goal_id, None)
+
     async def process_queue(self) -> None:
         """Process events from the queue continuously."""
         self._running = True
+        await self._start_scheduler()
 
         # Recover any events stuck in 'processing' from a previous crash
         recovered = self.queue.recover_stale()
@@ -86,6 +226,7 @@ class CoreLoop:
     async def run_cli(self) -> None:
         """Run the agent in interactive CLI mode with event queue."""
         self._running = True
+        await self._start_scheduler()
         print("Zoomac Agent v0.1.0")
         print(f"Model: {self.settings.model}")
         print(f"Memory: {self.settings.memgate_db_path}")
@@ -201,3 +342,10 @@ class CoreLoop:
         self.queue.close()
         self.autonomy.close()
         self.memory.close()
+        self._goal_store.close()
+
+    async def _start_scheduler(self) -> None:
+        if self._scheduler_started:
+            return
+        await self.scheduler.start()
+        self._scheduler_started = True

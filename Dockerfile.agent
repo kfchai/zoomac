@@ -1,0 +1,32 @@
+FROM python:3.11-slim
+
+# System tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl git jq wget unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Node.js LTS
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy project
+WORKDIR /app
+COPY pyproject.toml .
+COPY src/ src/
+COPY memgate/ memgate/
+COPY config/ config/
+
+# Install Python deps
+RUN pip install --no-cache-dir -e "." && \
+    pip install --no-cache-dir websockets
+
+# Non-root user
+RUN useradd -m -s /bin/bash agent
+USER agent
+
+ENV PYTHONPATH=/app/memgate:$PYTHONPATH
+
+EXPOSE 8765
+
+ENTRYPOINT ["python", "-m", "zoomac.main", "--mode", "server"]

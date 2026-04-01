@@ -1,0 +1,15 @@
+name: memory-first
+description: Prefer MemGate before answering questions about prior context or known entities.
+instructions: Use memory lookup tools before asserting facts about prior conversations, entities, or user preferences.
+triggers:
+  - remember
+  - memory
+  - fact
+  - preference
+tool_names:
+  - search_memory
+  - check_facts
+  - memory_status
+tags:
+  - memory
+  - recall

@@ -14,7 +14,7 @@ class ZoomacSettings(BaseSettings):
     model_config = {"env_prefix": "ZOOMAC_"}
 
     # LLM
-    model: str = Field(default="anthropic:claude-sonnet-4-20250514", description="Pydantic AI model identifier")
+    model: str = Field(default="claude-sonnet-4-20250514", description="Anthropic model identifier")
 
     # Paths
     project_dir: Path = Field(default_factory=lambda: Path.cwd(), description="Project root directory")
@@ -30,6 +30,13 @@ class ZoomacSettings(BaseSettings):
     # Agent
     max_sub_agents: int = Field(default=5, description="Maximum concurrent sub-agents")
     confidence_threshold: float = Field(default=0.7, description="Below this, trigger verification")
+
+    # Security
+    secret_key: str | None = Field(default=None, description="Encryption key for credential vault")
+
+    # WebSocket server
+    ws_host: str = Field(default="0.0.0.0", description="WebSocket server bind address")
+    ws_port: int = Field(default=8765, description="WebSocket server port")
 
     @property
     def memgate_db_path(self) -> Path:

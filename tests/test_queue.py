@@ -239,13 +239,19 @@ def test_different_event_types(queue):
 
 def test_schedule_event_preserved(queue):
     """ScheduleEvent fields survive serialization round-trip."""
-    event = ScheduleEvent(job_name="consolidate", task="MemGate.consolidate()", spawn_agent=True)
+    event = ScheduleEvent(
+        job_name="consolidate",
+        task="MemGate.consolidate()",
+        spawn_agent=True,
+        metadata={"goal_instruction": "summarize backlog"},
+    )
     queue.push(event)
     popped = queue.pop()
     assert isinstance(popped, ScheduleEvent)
     assert popped.job_name == "consolidate"
     assert popped.task == "MemGate.consolidate()"
     assert popped.spawn_agent is True
+    assert popped.metadata == {"goal_instruction": "summarize backlog"}
 
 
 def test_message_event_preserved(queue):

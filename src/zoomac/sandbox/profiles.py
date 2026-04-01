@@ -77,6 +77,8 @@ def get_profile(
     name: ProfileName | str,
     project_dir: str | None = None,
     home_dir: str | None = None,
+    project_mode: str = "ro",
+    extra_mounts: list[dict[str, str]] | None = None,
 ) -> SandboxProfile:
     """Get a sandbox profile, optionally adding dynamic mounts."""
     if isinstance(name, str):
@@ -98,7 +100,7 @@ def get_profile(
         profile.mounts.append({
             "source": project_dir,
             "target": "/project",
-            "mode": "ro",
+            "mode": project_mode,
             "type": "bind",
         })
 
@@ -110,6 +112,9 @@ def get_profile(
             "mode": "rw",
             "type": "bind",
         })
+
+    if extra_mounts:
+        profile.mounts.extend(extra_mounts)
 
     # Safety invariants — never allow these
     profile.privileged = False

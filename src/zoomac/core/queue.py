@@ -13,6 +13,7 @@ from zoomac.core.events import (
     Event,
     EventPriority,
     EventSource,
+    GoalEvent,
     MessageEvent,
     ScheduleEvent,
     SystemEvent,
@@ -23,6 +24,7 @@ _EVENT_TYPES: dict[str, type[Event]] = {
     "MessageEvent": MessageEvent,
     "ScheduleEvent": ScheduleEvent,
     "SystemEvent": SystemEvent,
+    "GoalEvent": GoalEvent,
     "Event": Event,
 }
 
@@ -68,8 +70,11 @@ class EventQueue:
     @property
     def conn(self) -> sqlite3.Connection:
         if self._conn is None:
+            Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
             self._conn = sqlite3.connect(self._db_path)
             self._conn.row_factory = sqlite3.Row
+            self._conn.execute("PRAGMA journal_mode=MEMORY")
+            self._conn.execute("PRAGMA synchronous=OFF")
             self._conn.executescript(_SCHEMA)
         return self._conn
 
@@ -202,6 +207,24 @@ class EventQueue:
         self.conn.commit()
         self._notify.set()
         return True
+
+    def list_dead_letters(self, limit: int = 100) -> list[dict[str, Any]]:
+        """List dead letter queue entries for inspection or replay decisions."""
+        rows = self.conn.execute(
+            "SELECT id, event_type, attempts, last_error, moved_at "
+            "FROM dead_letter_queue ORDER BY moved_at ASC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def replay_all_dead_letters(self, limit: int | None = None) -> int:
+        """Replay multiple dead-letter events back to the main queue."""
+        dead_letters = self.list_dead_letters(limit=limit or 1000)
+        replayed = 0
+        for entry in dead_letters:
+            if self.replay_dead_letter(entry["id"]):
+                replayed += 1
+        return replayed
 
     def close(self) -> None:
         """Close the database connection."""

@@ -1,0 +1,17 @@
+name: goal-execution
+description: Break multi-step work into explicit tasks, ask for blockers early, and report progress.
+instructions: For high-level objectives, decompose into ordered tasks, surface blockers early, and use the task tools that match the work.
+triggers:
+  - /goal
+  - plan
+  - task
+  - implement
+tool_names:
+  - write_code
+  - execute_in_sandbox
+  - request_credential
+  - store_goal_context
+  - send_user_message
+tags:
+  - planning
+  - coding

@@ -14,6 +14,7 @@ from zoomac.autonomy.classifier import (
     RiskClassifier,
     RiskLevel,
 )
+from zoomac.autonomy.pipeline import ApprovalMode, ApprovalOutcome
 from zoomac.autonomy.policy import AutonomyManager
 
 
@@ -222,3 +223,94 @@ def test_default_config_file(tmp_path):
         result = am.classify(ActionType.SEND_MESSAGE)
         assert result.risk == RiskLevel.HIGH
         am.close()
+
+
+def test_approval_pipeline_low_risk_auto_allows(tmp_path):
+    am = AutonomyManager(db_path=tmp_path / "audit.db")
+    decision = am.evaluate_action(ActionType.READ_FILE, detail="Read notes.txt")
+    assert decision.outcome == ApprovalOutcome.ALLOW
+    assert decision.mode == ApprovalMode.AUTO_ALLOW
+    am.close()
+
+
+def test_approval_pipeline_high_risk_asks_once(tmp_path):
+    am = AutonomyManager(db_path=tmp_path / "audit.db")
+    decision = am.evaluate_action(
+        ActionType.SEND_MESSAGE,
+        detail="Send a proactive message",
+        session_id="cli:cli",
+    )
+    assert decision.outcome == ApprovalOutcome.ASK
+    assert decision.mode == ApprovalMode.ASK_ONCE
+    am.close()
+
+
+def test_session_rule_allows_high_risk_action(tmp_path):
+    am = AutonomyManager(db_path=tmp_path / "audit.db")
+    am.allow_for_session("cli:cli", ActionType.SEND_MESSAGE)
+    decision = am.evaluate_action(
+        ActionType.SEND_MESSAGE,
+        detail="Send a proactive message",
+        session_id="cli:cli",
+    )
+    assert decision.outcome == ApprovalOutcome.ALLOW
+    assert decision.mode == ApprovalMode.ALLOW_FOR_SESSION
+    am.close()
+
+
+def test_command_prefix_rule_allows_command(tmp_path):
+    am = AutonomyManager(db_path=tmp_path / "audit.db")
+    am.allow_command_prefix("git status", ActionType.RUN_COMMAND)
+    decision = am.evaluate_action(
+        ActionType.RUN_COMMAND,
+        detail="Run git status",
+        command_text="git status --short",
+    )
+    assert decision.outcome == ApprovalOutcome.ALLOW
+    assert decision.mode == ApprovalMode.ALLOW_BY_RULE
+    am.close()
+
+
+def test_command_prefix_deny_rule_blocks_command(tmp_path):
+    am = AutonomyManager(db_path=tmp_path / "audit.db")
+    am.deny_command_prefix("rm -rf", ActionType.RUN_COMMAND)
+    decision = am.evaluate_action(
+        ActionType.RUN_COMMAND,
+        detail="Delete everything",
+        command_text="rm -rf /tmp/stuff",
+    )
+    assert decision.outcome == ApprovalOutcome.DENY
+    assert decision.mode == ApprovalMode.DENY
+    am.close()
+
+
+def test_path_prefix_rule_allows_file_write(tmp_path):
+    am = AutonomyManager(db_path=tmp_path / "audit.db")
+    allowed_path = tmp_path / "src" / "safe.py"
+    am.allow_path_prefix(str(allowed_path), ActionType.WRITE_FILE)
+
+    decision = am.evaluate_action(
+        ActionType.WRITE_FILE,
+        detail="Write safe file",
+        file_path=str(allowed_path),
+    )
+
+    assert decision.outcome == ApprovalOutcome.ALLOW
+    assert decision.mode == ApprovalMode.ALLOW_BY_RULE
+    am.close()
+
+
+def test_path_prefix_deny_rule_blocks_file_write(tmp_path):
+    am = AutonomyManager(db_path=tmp_path / "audit.db")
+    blocked_path = tmp_path / "secrets" / "prod.env"
+    am.deny_path_prefix(str(tmp_path / "secrets"), ActionType.WRITE_FILE)
+
+    decision = am.evaluate_action(
+        ActionType.WRITE_FILE,
+        detail="Overwrite secret file",
+        file_path=str(blocked_path),
+    )
+
+    assert decision.outcome == ApprovalOutcome.DENY
+    assert decision.mode == ApprovalMode.DENY
+    am.close()

@@ -14,7 +14,7 @@ from zoomac.brain.prompts import SYSTEM_PROMPT
 
 def test_settings_defaults():
     settings = ZoomacSettings()
-    assert settings.model == "anthropic:claude-sonnet-4-20250514"
+    assert settings.model == "claude-sonnet-4-20250514"
     assert settings.memory_max_tokens == 2000
     assert settings.memory_top_k == 10
     assert settings.max_sub_agents == 5

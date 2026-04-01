@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,11 @@ from zoomac.autonomy.classifier import (
     ActionType,
     RiskClassifier,
     RiskLevel,
+)
+from zoomac.autonomy.pipeline import (
+    ApprovalDecision,
+    ApprovalPipeline,
+    ApprovalRequest,
 )
 
 
@@ -55,25 +61,88 @@ class AutonomyManager:
         # Audit log
         self._db_path = str(db_path) if db_path else None
         self._db: sqlite3.Connection | None = None
+        self._pipeline = ApprovalPipeline(self._classifier, self._get_db)
 
     @property
     def db(self) -> sqlite3.Connection | None:
         if self._db_path is None:
             return None
         if self._db is None:
+            Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
             self._db = sqlite3.connect(self._db_path)
             self._db.row_factory = sqlite3.Row
+            self._db.execute("PRAGMA journal_mode=MEMORY")
+            self._db.execute("PRAGMA synchronous=OFF")
             self._db.executescript(_AUDIT_SCHEMA)
+            self._db.executescript(self._pipeline.schema)
         return self._db
+
+    def _get_db(self) -> sqlite3.Connection | None:
+        return self.db
 
     def classify(
         self,
         action_type: ActionType,
         skill_name: str | None = None,
         platform: str | None = None,
-    ) -> ActionClassification:
+        ) -> ActionClassification:
         """Classify an action and return its risk assessment."""
         return self._classifier.classify(action_type, skill_name, platform)
+
+    def evaluate_action(
+        self,
+        action_type: ActionType,
+        *,
+        detail: str | None = None,
+        skill_name: str | None = None,
+        platform: str | None = None,
+        session_id: str | None = None,
+        command_text: str | None = None,
+        file_path: str | None = None,
+    ) -> ApprovalDecision:
+        """Evaluate an action through the approval pipeline."""
+        return self._pipeline.evaluate(
+            ApprovalRequest(
+                action_type=action_type,
+                detail=detail,
+                skill_name=skill_name,
+                platform=platform,
+                session_id=session_id,
+                command_text=command_text,
+                file_path=file_path,
+            )
+        )
+
+    def allow_for_session(
+        self, session_id: str, action_type: ActionType | None = None
+    ) -> None:
+        self._pipeline.allow_for_session(session_id, action_type)
+
+    def allow_command_prefix(
+        self, prefix: str, action_type: ActionType | None = ActionType.RUN_COMMAND
+    ) -> None:
+        self._pipeline.allow_command_prefix(prefix, action_type)
+
+    def allow_path_prefix(
+        self, path_prefix: str, action_type: ActionType | None = None
+    ) -> None:
+        self._pipeline.allow_path_prefix(path_prefix, action_type)
+
+    def deny_command_prefix(
+        self, prefix: str, action_type: ActionType | None = ActionType.RUN_COMMAND
+    ) -> None:
+        self._pipeline.deny_command_prefix(prefix, action_type)
+
+    def deny_path_prefix(
+        self, path_prefix: str, action_type: ActionType | None = None
+    ) -> None:
+        self._pipeline.deny_path_prefix(path_prefix, action_type)
+
+    def approval_rules(self) -> list[dict[str, Any]]:
+        return [asdict(rule) for rule in self._pipeline.list_rules()]
+
+    def approval_log(self, limit: int = 50) -> list[dict[str, Any]]:
+        return self._pipeline.decision_log(limit)
 
     def check_and_log(
         self,
