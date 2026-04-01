@@ -1,0 +1,124 @@
+{
+  "name": "zoomac-chat",
+  "displayName": "Zoomac Chat",
+  "description": "Chat sidebar for the Zoomac AI agent — local coding agent or remote Docker backend",
+  "version": "0.2.0",
+  "publisher": "kfchai",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": [
+    "onWebviewPanel:zoomac.chat"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "zoomac",
+          "title": "Zoomac",
+          "icon": "$(hubot)"
+        }
+      ]
+    },
+    "views": {
+      "zoomac": [
+        {
+          "type": "webview",
+          "id": "zoomac.chatView",
+          "name": "Chat"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "zoomac.openChat",
+        "title": "Zoomac: New Chat",
+        "icon": "$(hubot)"
+      },
+      {
+        "command": "zoomac.resumeSession",
+        "title": "Zoomac: Resume Previous Session"
+      },
+      {
+        "command": "zoomac.switchMode",
+        "title": "Zoomac: Switch Backend Mode"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "zoomac.openChat",
+        "key": "ctrl+shift+z",
+        "mac": "cmd+shift+z"
+      },
+      {
+        "command": "zoomac.resumeSession",
+        "key": "ctrl+shift+r",
+        "mac": "cmd+shift+r"
+      }
+    ],
+    "configuration": {
+      "title": "Zoomac",
+      "properties": {
+        "zoomac.mode": {
+          "type": "string",
+          "enum": ["local", "remote"],
+          "default": "local",
+          "description": "Backend mode: 'local' (direct LLM API) or 'remote' (Docker WebSocket)"
+        },
+        "zoomac.provider": {
+          "type": "string",
+          "enum": ["anthropic", "openai", "ollama"],
+          "default": "anthropic",
+          "description": "LLM provider for local mode"
+        },
+        "zoomac.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "API key for the LLM provider (or set ANTHROPIC_API_KEY / OPENAI_API_KEY env var). Not needed for Ollama."
+        },
+        "zoomac.baseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Custom API base URL (e.g. http://localhost:11434/v1 for Ollama, or a vLLM/LM Studio endpoint)"
+        },
+        "zoomac.model": {
+          "type": "string",
+          "default": "claude-sonnet-4-20250514",
+          "description": "Model name (e.g. claude-sonnet-4-20250514, gpt-4o, qwen2.5-coder:32b)"
+        },
+        "zoomac.maxTokens": {
+          "type": "number",
+          "default": 8192,
+          "description": "Max tokens per LLM response"
+        },
+        "zoomac.memgatePath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the MemGate directory (e.g. D:\\Dev\\MemGate). Leave empty for auto-detection."
+        },
+        "zoomac.wsUrl": {
+          "type": "string",
+          "default": "ws://localhost:8765",
+          "description": "WebSocket URL for remote mode (Docker Zoomac agent)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "openai": "^4.0.0",
+    "ws": "^8.16.0",
+    "@types/ws": "^8.5.10"
+  }
+}
