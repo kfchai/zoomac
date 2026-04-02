@@ -634,6 +634,9 @@ export class LocalAgentBackend implements Backend {
   }
 
   private async _runToolLoop(): Promise<void> {
+    // Compact once at the start of the turn, not every iteration
+    await this._compactIfNeeded();
+
     for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
       // Check if cancelled
       if (this._cancelled) {
@@ -641,9 +644,6 @@ export class LocalAgentBackend implements Backend {
         this._emitter.fire({ type: "agent", content: "*Interrupted.*" });
         return;
       }
-
-      // Compact context if approaching the model's limit
-      await this._compactIfNeeded();
 
       // Clear spinner — streaming text will appear directly
       this._emitter.fire({ type: "spinner", text: "", active: false } as WebviewMessage);
@@ -967,7 +967,12 @@ export class LocalAgentBackend implements Backend {
           continue;
         }
 
-        // Not a rate limit error — rethrow
+        // Log full error details for debugging
+        const errBody = (err as any)?.error?.message || (err as any)?.response?.data || (err as any)?.body || "";
+        if (status === 400) {
+          throw new Error(`API error 400: ${msg}${errBody ? ` — ${JSON.stringify(errBody)}` : ""}`);
+        }
+
         throw err;
       }
     }

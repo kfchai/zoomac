@@ -284,26 +284,38 @@ export class OpenAIProvider implements LLMProvider {
     return response;
   }
 
-  /** Convert messages, splitting multi-tool-result blocks into individual messages. */
+  /** Convert messages, splitting multi-tool-result blocks and cleaning invalid entries. */
   private _convertMessages(messages: ConversationMessage[]): OpenAI.ChatCompletionMessageParam[] {
     const result: OpenAI.ChatCompletionMessageParam[] = [];
     for (const msg of messages) {
+      if (!msg || !msg.content) continue;
+
+      // Skip empty content arrays
+      if (Array.isArray(msg.content) && msg.content.length === 0) continue;
+
       if (typeof msg.content !== "string" && Array.isArray(msg.content)) {
         const toolResults = msg.content.filter((b) => b.type === "tool_result");
-        if (toolResults.length > 1) {
-          // Split: first emit the assistant tool_use message (should already be in history)
-          // Then emit each tool_result as a separate "tool" message
+        if (toolResults.length > 0) {
+          // Split each tool_result into a separate "tool" role message
           for (const tr of toolResults) {
-            result.push({
-              role: "tool" as const,
-              tool_call_id: tr.tool_use_id || "unknown",
-              content: tr.content || "",
-            });
+            if (tr.tool_use_id) {
+              result.push({
+                role: "tool" as const,
+                tool_call_id: tr.tool_use_id,
+                content: tr.content || "(no output)",
+              });
+            }
           }
           continue;
         }
       }
-      result.push(this._toOpenAIMessage(msg));
+
+      const converted = this._toOpenAIMessage(msg);
+      // Skip messages with empty/null content
+      if (converted.role === "assistant" && !converted.content && !(converted as any).tool_calls?.length) continue;
+      if (converted.role === "user" && !converted.content) continue;
+
+      result.push(converted);
     }
     return result;
   }
