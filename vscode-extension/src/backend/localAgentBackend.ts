@@ -11,7 +11,9 @@ import type {
 import { createProvider } from "../local/providers/types";
 import { TOOL_DEFINITIONS } from "../local/tools";
 import { createToolHandlers, type ToolHandler } from "../local/toolHandlers";
+import { McpClient, loadMcpConfigs } from "../local/mcpClient";
 import { MemoryBridge } from "../local/memoryBridge";
+import { gatherProjectContext } from "../local/projectContext";
 import { buildSystemPrompt } from "../local/systemPrompt";
 import { compactContext, estimateTotalTokens, getMaxContextTokens } from "../local/contextCompactor";
 
@@ -30,6 +32,7 @@ export class LocalAgentBackend implements Backend {
   private _toolHandlers: Record<string, ToolHandler>;
   private _memoryBridge: MemoryBridge;
   private _memoryAvailable = false;
+  private _mcpClients: McpClient[] = [];
   private _abortController?: AbortController;
   autoEdit = true;
 
@@ -62,11 +65,110 @@ export class LocalAgentBackend implements Backend {
       workspaceRoot,
     });
     this._toolHandlers = createToolHandlers(workspaceRoot, this._memoryBridge);
+
+    // Register sub-agent tool handler
+    this._toolHandlers.agent = this._runSubAgent.bind(this);
+  }
+
+  /** Sub-agent: spawns a separate LLM call with read-only tools for research tasks. */
+  private async _runSubAgent(input: Record<string, unknown>): Promise<string> {
+    const prompt = input.prompt as string;
+    if (!prompt) return "Error: no prompt provided";
+
+    // Build a minimal set of read-only tools for the sub-agent
+    const subTools: ToolDefinition[] = TOOL_DEFINITIONS.filter((t) =>
+      ["read", "glob", "grep", "bash"].includes(t.name)
+    );
+
+    // Emit sub-agent status to webview
+    this._emitter.fire({
+      type: "sub_agent",
+      data: { agent_id: "sub_" + Date.now(), description: prompt.substring(0, 80), status: "running" },
+    } as unknown as WebviewMessage);
+
+    const systemPrompt =
+      `You are a research sub-agent. Your job is to explore the codebase and answer the question concisely.\n` +
+      `Workspace: ${this._workspaceRoot}\n` +
+      `Use tools to find information. Return a concise summary of your findings (under 500 words).\n` +
+      `Do NOT make any changes — read-only exploration only.`;
+
+    const subMessages: ConversationMessage[] = [
+      { role: "user", content: prompt },
+    ];
+
+    // Run a mini tool loop (max 10 iterations)
+    for (let i = 0; i < 10; i++) {
+      const provider = this._provider as any;
+      const response: LLMResponse = provider.createMessageWithModel
+        ? await provider.createMessageWithModel(this._model, systemPrompt, subMessages, subTools, 4096)
+        : await provider.createMessage(systemPrompt, subMessages, subTools, 4096);
+
+      const textParts: string[] = [];
+      const toolUses: ContentBlock[] = [];
+
+      for (const block of response.content) {
+        if (block.type === "text" && block.text) textParts.push(block.text);
+        else if (block.type === "tool_use") toolUses.push(block);
+      }
+
+      if (response.stopReason !== "tool_use" || toolUses.length === 0) {
+        return textParts.join("\n") || "No findings.";
+      }
+
+      subMessages.push({ role: "assistant", content: response.content });
+
+      // Execute sub-agent tools (read-only, no confirmation needed)
+      const results: ContentBlock[] = [];
+      for (const tu of toolUses) {
+        const handler = this._toolHandlers[tu.name || ""];
+        let result = "Error: unknown tool";
+        if (handler && tu.name !== "agent") { // Prevent recursive sub-agents
+          try {
+            result = await handler(tu.input || {});
+            result = this._trimToolResult(result, tu.name || "");
+          } catch (e: unknown) {
+            result = `Error: ${e instanceof Error ? e.message : e}`;
+          }
+        }
+        results.push({ type: "tool_result", tool_use_id: tu.id, content: result });
+      }
+
+      subMessages.push({ role: "user", content: results });
+    }
+
+    return "Sub-agent reached iteration limit.";
   }
 
   async start(): Promise<void> {
     // Load system prompt (reads ZOOMAC.md / CLAUDE.md / AGENTS.md)
     this._baseSystemPrompt = await buildSystemPrompt(this._workspaceRoot);
+
+    // Auto-detect project context (directory tree, configs, git)
+    try {
+      const projectCtx = await gatherProjectContext(this._workspaceRoot);
+      if (projectCtx) {
+        this._baseSystemPrompt += projectCtx;
+      }
+    } catch {
+      // Project context is best-effort
+    }
+
+    // Connect MCP servers (external tools)
+    const mcpConfigs = loadMcpConfigs();
+    for (const cfg of mcpConfigs) {
+      try {
+        const client = new McpClient(cfg);
+        const mcpTools = await client.connect();
+        this._mcpClients.push(client);
+        // Register MCP tool handlers alongside built-in tools
+        const handlers = client.createHandlers();
+        Object.assign(this._toolHandlers, handlers);
+        // Add MCP tool definitions to TOOL_DEFINITIONS for the LLM
+        TOOL_DEFINITIONS.push(...mcpTools);
+      } catch {
+        // MCP server failed to connect — skip silently
+      }
+    }
 
     // Initialize memory — tries daemon, subprocess, then MEMORY.md fallback
     const memBackend = await this._memoryBridge.init();
@@ -85,11 +187,70 @@ export class LocalAgentBackend implements Backend {
     this._abortController?.abort();
     this._abortController = undefined;
     this._memoryBridge.dispose();
+    for (const client of this._mcpClients) {
+      client.disconnect();
+    }
+    this._mcpClients = [];
     // Reject all pending confirmations
     for (const [, resolve] of this._pendingConfirmations) {
       resolve(false);
     }
     this._pendingConfirmations.clear();
+  }
+
+  /**
+   * Restore LLM conversation history from saved session messages.
+   * Converts webview messages (user, agent, tool_call) back into
+   * the ConversationMessage format the LLM expects.
+   */
+  restoreHistory(messages: unknown[]): void {
+    this._messages = [];
+
+    for (const msg of messages) {
+      const m = msg as Record<string, any>;
+      if (!m || !m.type) continue;
+
+      if (m.type === "user") {
+        this._messages.push({ role: "user", content: m.content || "" });
+      } else if (m.type === "agent") {
+        this._messages.push({
+          role: "assistant",
+          content: [{ type: "text", text: m.content || "" }],
+        });
+      } else if (m.type === "tool_call" && m.data) {
+        // Tool calls need to be represented as assistant tool_use + user tool_result pairs
+        const toolName = m.data.tool || "unknown";
+        const toolId = "restored_" + Math.random().toString(36).substring(2, 8);
+
+        // Build input from the saved data
+        const input: Record<string, unknown> = {};
+        if (m.data.command) input.command = m.data.command;
+        if (m.data.file_path) input.file_path = m.data.file_path;
+        if (m.data.content) input.query = m.data.content;
+
+        // Assistant's tool_use
+        this._messages.push({
+          role: "assistant",
+          content: [{
+            type: "tool_use",
+            id: toolId,
+            name: toolName,
+            input,
+          }],
+        });
+
+        // Tool result
+        const result = m.data.output || m.data.content || "Done";
+        this._messages.push({
+          role: "user",
+          content: [{
+            type: "tool_result",
+            tool_use_id: toolId,
+            content: typeof result === "string" ? result.substring(0, 2000) : "Done",
+          }],
+        });
+      }
+    }
   }
 
   /** Called by the provider (chatViewProvider/chatPanel) when user responds to a confirmation */
@@ -120,6 +281,78 @@ export class LocalAgentBackend implements Backend {
         input: toolInput,
       } as unknown as WebviewMessage);
     });
+  }
+
+  /** Handle slash commands — returns true if handled. */
+  private async _handleSlashCommand(content: string): Promise<boolean> {
+    const cmd = content.split(/\s+/)[0].toLowerCase();
+    const args = content.substring(cmd.length).trim();
+
+    switch (cmd) {
+      case "/commit": {
+        this._emitter.fire({ type: "user", content });
+        this._emitter.fire({ type: "spinner", text: "Generating commit...", active: true } as WebviewMessage);
+
+        const commitPrompt =
+          "The user wants to commit their changes. " +
+          "Run `git diff --stat` and `git status --short` to see what changed, " +
+          "then generate a concise commit message. " +
+          "Stage relevant files (skip .env, secrets, lock files) " +
+          "and run `git commit -m \"...\"`. " +
+          (args ? `User note: ${args}` : "");
+
+        this._messages.push({ role: "user", content: commitPrompt });
+        try {
+          await this._injectMemoryContext("git commit");
+          await this._runToolLoop();
+        } catch (err: unknown) {
+          this._emitter.fire({ type: "spinner", text: "", active: false } as WebviewMessage);
+          this._emitter.fire({ type: "error", content: `Commit failed: ${err}` });
+        }
+        return true;
+      }
+
+      case "/clear": {
+        this._messages = [];
+        this._emitter.fire({ type: "agent", content: "Conversation cleared." });
+        return true;
+      }
+
+      case "/compact": {
+        this._emitter.fire({ type: "user", content });
+        this._emitter.fire({ type: "spinner", text: "Compacting...", active: true } as WebviewMessage);
+        await this._compactIfNeeded();
+        this._emitter.fire({ type: "spinner", text: "", active: false } as WebviewMessage);
+        this._emitContextUsage();
+        return true;
+      }
+
+      case "/model": {
+        if (args) {
+          this._model = args;
+          this._emitter.fire({ type: "agent", content: `Model switched to \`${args}\`.` });
+          this._emitter.fire({ type: "status", content: `Local (${this._model})` });
+        } else {
+          this._emitter.fire({ type: "agent", content: `Current model: \`${this._model}\`` });
+        }
+        return true;
+      }
+
+      case "/help": {
+        this._emitter.fire({ type: "agent", content:
+          "### Commands\n" +
+          "- `/commit [note]` — Auto-commit with generated message\n" +
+          "- `/clear` — Clear conversation\n" +
+          "- `/compact` — Force context compaction\n" +
+          "- `/model [name]` — Show/switch model\n" +
+          "- `/help` — This help"
+        });
+        return true;
+      }
+
+      default:
+        return false;
+    }
   }
 
   private _confirmDescription(tool: string, input: Record<string, unknown>): string {
@@ -176,6 +409,12 @@ export class LocalAgentBackend implements Backend {
   }
 
   async sendMessage(content: string): Promise<void> {
+    // Handle slash commands
+    if (content.startsWith("/")) {
+      const handled = await this._handleSlashCommand(content);
+      if (handled) return;
+    }
+
     // Echo user message
     this._emitter.fire({ type: "user", content });
 
@@ -265,6 +504,12 @@ export class LocalAgentBackend implements Backend {
         // Append assistant response to history
         this._messages.push({ role: "assistant", content: response.content });
 
+        // Extract and ingest inline <memory> blocks from the response
+        this._extractAndIngestMemory(response.content);
+
+        // Compress old tool results now that the LLM has processed them
+        this._compressHistoryToolResults();
+
         // Show token usage + context pie
         this._emitContextUsage();
         if (response.usage) {
@@ -283,23 +528,65 @@ export class LocalAgentBackend implements Backend {
         content: response.content,
       });
 
-      // Execute each tool call
+      // Execute tool calls — parallel for safe tools, sequential for destructive
       const toolResults: ContentBlock[] = [];
 
-      for (const tu of toolUses) {
+      // Split into safe (parallel) and destructive (needs confirmation)
+      const safeCalls = toolUses.filter((tu) => !DESTRUCTIVE_TOOLS.has(tu.name || ""));
+      const destructiveCalls = toolUses.filter((tu) => DESTRUCTIVE_TOOLS.has(tu.name || ""));
+
+      // Show spinner
+      if (toolUses.length > 1) {
+        this._emitter.fire({
+          type: "spinner",
+          text: `Running ${toolUses.length} tools...`,
+          active: true,
+        } as WebviewMessage);
+      } else if (toolUses.length === 1) {
+        this._emitter.fire({
+          type: "spinner",
+          text: this._toolSpinnerText(toolUses[0].name || "", toolUses[0].input || {}),
+          active: true,
+        } as WebviewMessage);
+      }
+
+      // Execute safe tools in parallel
+      if (safeCalls.length > 0) {
+        const safeResults = await Promise.all(
+          safeCalls.map(async (tu) => {
+            const toolName = tu.name || "unknown";
+            const toolInput = tu.input || {};
+            const handler = this._toolHandlers[toolName];
+            let result: string;
+            if (!handler) {
+              result = `Error: unknown tool '${toolName}'`;
+            } else {
+              try {
+                result = await handler(toolInput);
+              } catch (err: unknown) {
+                result = `Error: ${err instanceof Error ? err.message : String(err)}`;
+              }
+            }
+            this._emitToolCall(toolName, toolInput, result);
+            return { tu, result };
+          })
+        );
+
+        for (const { tu, result } of safeResults) {
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: tu.id,
+            content: this._trimToolResult(result, tu.name || ""),
+          });
+        }
+      }
+
+      // Execute destructive tools sequentially (may need confirmation)
+      for (const tu of destructiveCalls) {
         const toolName = tu.name || "unknown";
         const toolInput = tu.input || {};
 
-        // Show spinner with tool name
-        this._emitter.fire({
-          type: "spinner",
-          text: this._toolSpinnerText(toolName, toolInput),
-          active: true,
-        } as WebviewMessage);
-
-        // Check if confirmation needed for destructive tools
-        if (!this.autoEdit && DESTRUCTIVE_TOOLS.has(toolName)) {
-          // Clear spinner while waiting for user
+        if (!this.autoEdit) {
           this._emitter.fire({ type: "spinner", text: "", active: false } as WebviewMessage);
 
           const allowed = await this._requestConfirmation(toolName, toolInput);
@@ -309,14 +596,10 @@ export class LocalAgentBackend implements Backend {
               tool_use_id: tu.id,
               content: `User denied: ${toolName} was not executed.`,
             });
-            this._emitter.fire({
-              type: "agent",
-              content: `Skipped ${toolName} (denied by user).`,
-            });
+            this._emitter.fire({ type: "agent", content: `Skipped ${toolName} (denied by user).` });
             continue;
           }
 
-          // Re-show spinner after approval
           this._emitter.fire({
             type: "spinner",
             text: this._toolSpinnerText(toolName, toolInput),
@@ -324,10 +607,8 @@ export class LocalAgentBackend implements Backend {
           } as WebviewMessage);
         }
 
-        // Execute the tool
         const handler = this._toolHandlers[toolName];
         let result: string;
-
         if (!handler) {
           result = `Error: unknown tool '${toolName}'`;
         } else {
@@ -338,24 +619,16 @@ export class LocalAgentBackend implements Backend {
           }
         }
 
-        // Clear spinner and emit tool call result
-        this._emitter.fire({
-          type: "spinner",
-          text: "",
-          active: false,
-        } as WebviewMessage);
-
         this._emitToolCall(toolName, toolInput, result);
-
-        // Truncate large tool results before sending to LLM to save tokens
-        const trimmedResult = this._trimToolResult(result, toolName);
-
         toolResults.push({
           type: "tool_result",
           tool_use_id: tu.id,
-          content: trimmedResult,
+          content: this._trimToolResult(result, toolName),
         });
       }
+
+      // Clear spinner
+      this._emitter.fire({ type: "spinner", text: "", active: false } as WebviewMessage);
 
       // Append tool results to history
       this._messages.push({
@@ -632,37 +905,184 @@ export class LocalAgentBackend implements Backend {
    * The full result is shown in the UI (via _emitToolCall above),
    * but only a truncated version goes into the conversation history.
    */
+  /**
+   * Trim tool results BEFORE sending to LLM (aggressive, like CC).
+   * The full result is shown in the UI — this only affects what the model sees.
+   */
   private _trimToolResult(result: string, toolName: string): string {
-    // Don't trim short results
-    if (result.length <= 3000) return result;
+    // Short results pass through
+    if (result.length <= 1500) return result;
 
-    // For file reads: keep first and last portion
-    if (toolName === "read") {
-      const lines = result.split("\n");
-      if (lines.length > 100) {
-        const head = lines.slice(0, 60).join("\n");
-        const tail = lines.slice(-20).join("\n");
-        return head + `\n\n... [${lines.length - 80} lines omitted] ...\n\n` + tail;
+    switch (toolName) {
+      case "read": {
+        // Keep first 40 + last 10 lines — model doesn't need the full file
+        const lines = result.split("\n");
+        if (lines.length > 60) {
+          const head = lines.slice(0, 40).join("\n");
+          const tail = lines.slice(-10).join("\n");
+          return head + `\n\n... [${lines.length - 50} lines omitted] ...\n\n` + tail;
+        }
+        if (result.length > 3000) {
+          return result.substring(0, 2500) + `\n... [truncated, ${lines.length} lines total]`;
+        }
+        return result;
+      }
+
+      case "grep":
+      case "search": {
+        // First 20 matches are enough for the model to understand
+        const lines = result.split("\n");
+        if (lines.length > 20) {
+          return lines.slice(0, 20).join("\n") + `\n... [${lines.length - 20} more matches]`;
+        }
+        return result;
+      }
+
+      case "glob": {
+        // File lists: first 30 entries
+        const lines = result.split("\n");
+        if (lines.length > 30) {
+          return lines.slice(0, 30).join("\n") + `\n... [${lines.length - 30} more files]`;
+        }
+        return result;
+      }
+
+      case "bash": {
+        // Command output: keep first 30 + last 10 lines
+        const lines = result.split("\n");
+        if (lines.length > 50) {
+          const head = lines.slice(0, 30).join("\n");
+          const tail = lines.slice(-10).join("\n");
+          return head + `\n... [${lines.length - 40} lines omitted] ...\n` + tail;
+        }
+        if (result.length > 4000) {
+          return result.substring(0, 3000) + `\n... [truncated]`;
+        }
+        return result;
+      }
+
+      case "edit": {
+        // Edit results are already short summaries
+        return result;
+      }
+
+      default: {
+        if (result.length > 3000) {
+          return result.substring(0, 2500) + `\n... [truncated, ${result.length} chars]`;
+        }
+        return result;
       }
     }
+  }
 
-    // For grep/search: limit to first N matches
-    if (toolName === "grep" || toolName === "search") {
-      const lines = result.split("\n");
-      if (lines.length > 50) {
-        return lines.slice(0, 50).join("\n") + `\n... [${lines.length - 50} more lines]`;
+  /**
+   * Compress tool results in history AFTER the LLM has processed them.
+   * Called after each successful LLM response that followed tool results.
+   * Replaces verbose tool results with one-line summaries to save tokens
+   * on all subsequent API calls.
+   */
+  private _compressHistoryToolResults(): void {
+    for (let i = 0; i < this._messages.length; i++) {
+      const msg = this._messages[i];
+      if (msg.role !== "user" || typeof msg.content === "string") continue;
+
+      const blocks = msg.content as ContentBlock[];
+      let modified = false;
+
+      for (let j = 0; j < blocks.length; j++) {
+        const block = blocks[j];
+        if (block.type !== "tool_result" || !block.content) continue;
+        if (block.content.length <= 200) continue; // Already compact
+
+        // Find the matching tool_use in the previous assistant message
+        let toolName = "tool";
+        if (i > 0) {
+          const prev = this._messages[i - 1];
+          if (prev.role === "assistant" && Array.isArray(prev.content)) {
+            const toolUse = (prev.content as ContentBlock[]).find(
+              (b) => b.type === "tool_use" && b.id === block.tool_use_id
+            );
+            if (toolUse) toolName = toolUse.name || "tool";
+          }
+        }
+
+        // Compress based on tool type
+        blocks[j] = {
+          ...block,
+          content: this._summarizeToolResult(toolName, block.content),
+        };
+        modified = true;
+      }
+
+      if (modified) {
+        this._messages[i] = { ...msg, content: blocks };
       }
     }
+  }
 
-    // General truncation
-    if (result.length > 6000) {
-      return result.substring(0, 5000) + `\n... [truncated, ${result.length} chars total]`;
+  /** Create a one-line summary of a tool result for history compression. */
+  private _summarizeToolResult(toolName: string, result: string): string {
+    const lines = result.split("\n");
+    const lineCount = lines.length;
+    const charCount = result.length;
+
+    switch (toolName) {
+      case "read":
+        return `[Read: ${lineCount} lines, ${charCount} chars]`;
+      case "write":
+        // Keep the confirmation message as-is (already short)
+        return result.length > 200 ? `[Wrote file: ${lineCount} lines]` : result;
+      case "edit":
+        return result; // Already short
+      case "bash":
+        // Keep first line (usually the most informative) + summary
+        return lines[0] + (lineCount > 1 ? `\n... [${lineCount} lines total]` : "");
+      case "glob":
+        return `[Found ${lineCount} files]`;
+      case "grep":
+      case "search":
+        return `[${lineCount} matches found]`;
+      case "memory_search":
+      case "memory_facts":
+        return result.length > 300 ? result.substring(0, 200) + "..." : result;
+      default:
+        return result.length > 200 ? result.substring(0, 150) + `... [${charCount} chars]` : result;
     }
-
-    return result;
   }
 
   /** Emit context usage to the webview for the pie chart indicator. */
+  /**
+   * Extract <memory> JSON blocks from the LLM response and auto-ingest into MemGate.
+   * The LLM includes these inline to avoid an extra tool call round-trip.
+   */
+  private _extractAndIngestMemory(content: ContentBlock[]): void {
+    const MEMORY_RE = /<memory>\s*(\{[\s\S]*?\})\s*<\/memory>/g;
+
+    for (const block of content) {
+      if (block.type !== "text" || !block.text) continue;
+
+      let match;
+      while ((match = MEMORY_RE.exec(block.text)) !== null) {
+        try {
+          const payload = JSON.parse(match[1]);
+          const memContent = payload.content;
+          if (!memContent) continue;
+
+          // Ingest asynchronously — don't block the response
+          this._memoryBridge.store(
+            memContent,
+            payload.entities,
+            payload.relationships
+          ).catch(() => {
+            // Silent failure — memory is best-effort
+          });
+        } catch {
+          // Invalid JSON in <memory> block — skip
+        }
+      }
+    }
+  }
+
   private _emitContextUsage(): void {
     const systemPrompt = this._currentSystemPrompt || this._baseSystemPrompt;
     const used = estimateTotalTokens(systemPrompt, this._messages);

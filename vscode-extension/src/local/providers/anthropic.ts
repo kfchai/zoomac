@@ -57,13 +57,30 @@ export class AnthropicProvider implements LLMProvider {
   ): Promise<LLMResponse> {
     const anthropicMessages = messages.map((m) => this._toAnthropicMessage(m));
 
-    const params: Anthropic.MessageCreateParams = {
+    // Use structured system prompt with cache_control for prompt caching
+    const systemBlocks: any[] = [
+      {
+        type: "text",
+        text: system,
+        cache_control: { type: "ephemeral" },
+      },
+    ];
+
+    const params: any = {
       model,
-      system,
+      system: systemBlocks,
       messages: anthropicMessages,
       max_tokens: maxTokens,
       stream: true,
     };
+
+    // Extended thinking for supported models (Sonnet 4, Opus 4)
+    if (model.includes("sonnet-4") || model.includes("opus-4") || model.includes("claude-4")) {
+      params.thinking = {
+        type: "enabled",
+        budget_tokens: Math.min(4096, maxTokens),
+      };
+    }
 
     if (tools.length > 0) {
       params.tools = tools.map((t) => ({
@@ -162,12 +179,23 @@ export class AnthropicProvider implements LLMProvider {
   ): Promise<LLMResponse> {
     const anthropicMessages = messages.map((m) => this._toAnthropicMessage(m));
 
-    const params: Anthropic.MessageCreateParams = {
+    const systemBlocks: any[] = [
+      { type: "text", text: system, cache_control: { type: "ephemeral" } },
+    ];
+
+    const params: any = {
       model,
-      system,
+      system: systemBlocks,
       messages: anthropicMessages,
       max_tokens: maxTokens,
     };
+
+    if (model.includes("sonnet-4") || model.includes("opus-4") || model.includes("claude-4")) {
+      params.thinking = {
+        type: "enabled",
+        budget_tokens: Math.min(4096, maxTokens),
+      };
+    }
 
     if (tools.length > 0) {
       params.tools = tools.map((t) => ({

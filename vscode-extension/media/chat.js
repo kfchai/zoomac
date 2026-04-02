@@ -466,10 +466,17 @@
 
     liveTextContent += text;
 
-    // Update the displayed text (plain text while streaming, markdown on finalize)
+    // Render markdown during streaming (throttled to avoid lag)
     const contentEl = liveTextEl.querySelector(".msg-agent-content");
     if (contentEl) {
-      contentEl.textContent = liveTextContent;
+      if (!appendTextDelta._timer) {
+        appendTextDelta._timer = setTimeout(() => {
+          appendTextDelta._timer = null;
+          if (contentEl && liveTextContent) {
+            contentEl.innerHTML = renderMarkdown(liveTextContent);
+          }
+        }, 100); // Re-render at most every 100ms
+      }
     }
 
     scrollToBottom();
@@ -517,13 +524,17 @@
     // Save the finalized text as an agent message for replay persistence
     recordMessage({ type: "agent", content });
 
+    // Strip <memory> blocks from display
+    const displayContent = content.replace(/<memory>[\s\S]*?<\/memory>/g, "").trim();
+    if (!displayContent) return;
+
     // Show as full rendered markdown on the tree line
     const wrapper = document.createElement("div");
     wrapper.className = "tree-item msg-agent";
 
     const textEl = document.createElement("div");
     textEl.className = "msg-agent-content";
-    textEl.innerHTML = renderMarkdown(content);
+    textEl.innerHTML = renderMarkdown(displayContent);
 
     wrapper.appendChild(textEl);
     messagesEl.appendChild(wrapper);
@@ -741,13 +752,17 @@
 
     if (!content || !content.trim()) return;
 
+    // Strip <memory> blocks from display — they're auto-ingested by the backend
+    const displayContent = content.replace(/<memory>[\s\S]*?<\/memory>/g, "").trim();
+    if (!displayContent) return;
+
     // Show agent response as full rendered markdown on the tree line
     const wrapper = document.createElement("div");
     wrapper.className = "tree-item msg-agent";
 
     const textEl = document.createElement("div");
     textEl.className = "msg-agent-content";
-    textEl.innerHTML = renderMarkdown(content);
+    textEl.innerHTML = renderMarkdown(displayContent);
 
     wrapper.appendChild(textEl);
     messagesEl.appendChild(wrapper);
@@ -767,7 +782,7 @@
     const status = data.status || "done";
 
     const block = document.createElement("div");
-    block.className = status === "running" ? "tool-block" : "tool-block collapsed";
+    block.className = "tool-block";
     block.setAttribute("data-tool", tool);
 
     // Header with tree dot
@@ -901,12 +916,13 @@
   function renderReadBody(body, data) {
     if (!data.file_path) return;
 
-    // File path as clickable link
+    // Show file path + line range
+    let pathText = data.file_path;
+    if (data.line_range) pathText += " (" + data.line_range + ")";
+
     const pathEl = document.createElement("a");
     pathEl.className = "tool-output-link";
     pathEl.href = "#";
-    let pathText = data.file_path;
-    if (data.line_range) pathText += " (" + data.line_range + ")";
     pathEl.textContent = pathText;
     pathEl.addEventListener("click", (e) => {
       e.preventDefault();
@@ -914,17 +930,24 @@
     });
     body.appendChild(pathEl);
 
-    // Show first 5 lines as preview, if content available
+    // Content preview (first 4 lines, click to open full)
     if (data.content) {
       const lines = data.content.split("\n");
-      const preview = lines.slice(0, 5).join("\n");
-      const previewEl = document.createElement("div");
-      previewEl.className = "bash-code bash-code-compact";
-      previewEl.textContent = preview;
-      if (lines.length > 5) {
-        previewEl.textContent += "\n...";
+      const preview = lines.slice(0, 4).join("\n");
+      const outBlock = document.createElement("div");
+      outBlock.className = "bash-code bash-code-compact";
+      outBlock.textContent = preview;
+      if (lines.length > 4) {
+        const fade = document.createElement("div");
+        fade.className = "bash-code-fade";
+        outBlock.appendChild(fade);
       }
-      body.appendChild(previewEl);
+      outBlock.style.cursor = "pointer";
+      outBlock.title = "Click to open file";
+      outBlock.addEventListener("click", () => {
+        vscode.postMessage({ type: "open_file", path: data.file_path });
+      });
+      body.appendChild(outBlock);
     }
   }
 
@@ -1020,10 +1043,10 @@
     const content = data.content || data.output || "";
     if (!content) return;
 
-    // Tree-like display for file lists
+    // Tree-like display for file/search results
     const lines = content.split("\n").filter(Boolean);
-    if (lines.length <= 10) {
-      // Show inline as tree
+    if (lines.length <= 15) {
+      // Show all inline as tree
       const tree = document.createElement("div");
       tree.className = "file-tree";
       lines.forEach((line) => {
@@ -1061,20 +1084,28 @@
     const content = data.content || "";
     if (!content) return;
 
-    const id = nextToolId();
-    const link = document.createElement("a");
-    link.className = "tool-output-link";
-    link.href = "#";
-    link.textContent = "View output (" + id + ")";
-    link.addEventListener("click", (e) => {
-      e.preventDefault();
-      vscode.postMessage({
-        type: "open_content",
-        title: "Tool output (" + id + ")",
-        content: content,
+    // Show content inline with preview + click to open full
+    const lines = content.split("\n");
+    const preview = lines.slice(0, 4).join("\n");
+    const outBlock = document.createElement("div");
+    outBlock.className = "bash-code" + (lines.length > 4 ? " bash-code-compact" : "");
+    outBlock.textContent = preview;
+    if (lines.length > 4) {
+      const fade = document.createElement("div");
+      fade.className = "bash-code-fade";
+      outBlock.appendChild(fade);
+      outBlock.style.cursor = "pointer";
+      outBlock.title = "Click to view full output";
+      const id = nextToolId();
+      outBlock.addEventListener("click", () => {
+        vscode.postMessage({
+          type: "open_content",
+          title: "Tool output (" + id + ")",
+          content: content,
+        });
       });
-    });
-    body.appendChild(link);
+    }
+    body.appendChild(outBlock);
   }
 
   // ===== Markdown rendering (lightweight) =====

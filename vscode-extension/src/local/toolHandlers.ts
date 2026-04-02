@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { exec } from "child_process";
+import * as fs from "fs";
 import * as path from "path";
 import { MemoryBridge } from "./memoryBridge";
 
@@ -44,25 +45,17 @@ function resolvePath(workspaceRoot: string, filePath: string): string {
 
 function readFile(workspaceRoot: string): ToolHandler {
   return async (input) => {
-    const filePath = resolvePath(
-      workspaceRoot,
-      input.file_path as string
-    );
-    const uri = vscode.Uri.file(filePath);
+    const filePath = resolvePath(workspaceRoot, input.file_path as string);
 
     try {
-      const bytes = await vscode.workspace.fs.readFile(uri);
-      const text = Buffer.from(bytes).toString("utf-8");
+      const text = fs.readFileSync(filePath, "utf-8");
       const lines = text.split("\n");
 
       const offset = (input.offset as number) || 0;
       const limit = (input.limit as number) || lines.length;
       const slice = lines.slice(offset, offset + limit);
 
-      const numbered = slice.map(
-        (line, i) => `${offset + i + 1}\t${line}`
-      );
-      return numbered.join("\n");
+      return slice.map((line, i) => `${offset + i + 1}\t${line}`).join("\n");
     } catch (err: unknown) {
       return `Error reading ${filePath}: ${err}`;
     }
@@ -73,24 +66,12 @@ function readFile(workspaceRoot: string): ToolHandler {
 
 function writeFile(workspaceRoot: string): ToolHandler {
   return async (input) => {
-    const filePath = resolvePath(
-      workspaceRoot,
-      input.file_path as string
-    );
+    const filePath = resolvePath(workspaceRoot, input.file_path as string);
     const content = input.content as string;
-    const uri = vscode.Uri.file(filePath);
 
     try {
-      // Create parent directories
-      const dir = vscode.Uri.file(path.dirname(filePath));
-      try {
-        await vscode.workspace.fs.stat(dir);
-      } catch {
-        await vscode.workspace.fs.createDirectory(dir);
-      }
-
-      const bytes = Buffer.from(content, "utf-8");
-      await vscode.workspace.fs.writeFile(uri, bytes);
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      fs.writeFileSync(filePath, content, "utf-8");
       const lineCount = content.split("\n").length;
       return `Wrote ${content.length} bytes (${lineCount} lines) to ${input.file_path}`;
     } catch (err: unknown) {
@@ -103,34 +84,25 @@ function writeFile(workspaceRoot: string): ToolHandler {
 
 function editFile(workspaceRoot: string): ToolHandler {
   return async (input) => {
-    const filePath = resolvePath(
-      workspaceRoot,
-      input.file_path as string
-    );
+    const filePath = resolvePath(workspaceRoot, input.file_path as string);
     const oldString = input.old_string as string;
     const newString = input.new_string as string;
-    const uri = vscode.Uri.file(filePath);
 
     try {
-      const bytes = await vscode.workspace.fs.readFile(uri);
-      const text = Buffer.from(bytes).toString("utf-8");
+      const text = fs.readFileSync(filePath, "utf-8");
 
       const index = text.indexOf(oldString);
       if (index === -1) {
         return `Error: old_string not found in ${input.file_path}`;
       }
 
-      // Check uniqueness
       const secondIndex = text.indexOf(oldString, index + 1);
       if (secondIndex !== -1) {
         return `Error: old_string is not unique in ${input.file_path} (found at positions ${index} and ${secondIndex}). Provide more context.`;
       }
 
       const newText = text.replace(oldString, newString);
-      await vscode.workspace.fs.writeFile(
-        uri,
-        Buffer.from(newText, "utf-8")
-      );
+      fs.writeFileSync(filePath, newText, "utf-8");
 
       const oldLines = oldString.split("\n").length;
       const newLines = newString.split("\n").length;
@@ -151,6 +123,31 @@ function editFile(workspaceRoot: string): ToolHandler {
 
 // ── Bash ──
 
+function findGitBash(): string {
+  if (process.platform !== "win32") return "/bin/bash";
+
+  // Check env var first (user override)
+  if (process.env.CLAUDE_CODE_GIT_BASH_PATH) return process.env.CLAUDE_CODE_GIT_BASH_PATH;
+
+  // Common Git Bash locations on Windows
+  const candidates = [
+    "C:\\Program Files\\Git\\bin\\bash.exe",
+    "C:\\Program Files (x86)\\Git\\bin\\bash.exe",
+    process.env.LOCALAPPDATA + "\\Programs\\Git\\bin\\bash.exe",
+    process.env.ProgramFiles + "\\Git\\bin\\bash.exe",
+  ];
+
+  const fs = require("fs");
+  for (const p of candidates) {
+    if (p && fs.existsSync(p)) return p;
+  }
+
+  // Fallback to cmd.exe if no Git Bash found
+  return "cmd.exe";
+}
+
+const _gitBash = findGitBash();
+
 function runBash(workspaceRoot: string): ToolHandler {
   return async (input) => {
     const command = input.command as string;
@@ -162,8 +159,8 @@ function runBash(workspaceRoot: string): ToolHandler {
         {
           cwd: workspaceRoot,
           timeout,
-          maxBuffer: 1024 * 1024, // 1MB
-          shell: process.platform === "win32" ? "bash" : "/bin/bash",
+          maxBuffer: 1024 * 1024,
+          shell: _gitBash,
         },
         (error, stdout, stderr) => {
           let output = "";

@@ -18,6 +18,9 @@ export interface Backend {
   /** Resolve a pending tool confirmation (allow/deny) */
   resolveConfirmation?(id: string, allowed: boolean): void;
 
+  /** Restore conversation history from a previous session */
+  restoreHistory?(messages: unknown[]): void;
+
   /** Whether destructive tools auto-execute without confirmation */
   autoEdit: boolean;
 

@@ -210,4 +210,24 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       required: ["entity"],
     },
   },
+  // ── Sub-agent tool ──
+  {
+    name: "agent",
+    description:
+      "Spawn a sub-agent to handle a complex research or exploration task independently. " +
+      "The sub-agent has access to read, glob, grep, and bash tools but runs in a separate context. " +
+      "Use this for tasks that require searching across many files, exploring unfamiliar code, " +
+      "or gathering information without cluttering the main conversation. " +
+      "The sub-agent returns a concise summary of its findings.",
+    input_schema: {
+      type: "object",
+      properties: {
+        prompt: {
+          type: "string",
+          description: "The task for the sub-agent to complete",
+        },
+      },
+      required: ["prompt"],
+    },
+  },
 ];

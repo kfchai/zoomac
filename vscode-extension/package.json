@@ -98,6 +98,11 @@
           "default": "",
           "description": "Path to the MemGate directory (e.g. D:\\Dev\\MemGate). Leave empty for auto-detection."
         },
+        "zoomac.mcpServers": {
+          "type": "object",
+          "default": {},
+          "description": "MCP servers to connect. Example: {\"browser\": {\"command\": \"npx\", \"args\": [\"-y\", \"@anthropic-ai/mcp-server-browser\"]}}"
+        },
         "zoomac.wsUrl": {
           "type": "string",
           "default": "ws://localhost:8765",

@@ -101,10 +101,14 @@ export class ChatPanel {
       if (data.type === "webview_ready") {
         ChatPanel._log?.appendLine(`[webview_ready] received, messages to replay: ${this._messages.length}`);
         if (this._messages.length > 0) {
+          // Restore webview UI
           this._postToWebview({
             type: "restore_session",
             messages: this._messages,
           });
+          // Restore LLM conversation history so the agent has context
+          this._backend?.restoreHistory?.(this._messages);
+          ChatPanel._log?.appendLine(`[webview_ready] backend history restored`);
         }
         return;
       }
@@ -118,7 +122,8 @@ export class ChatPanel {
         ChatPanel.showSessionPicker(this._extensionUri);
       } else if (data.type === "send" && data.content) {
         this._updateTitle(data.content);
-        this._backend?.sendMessage(data.content);
+        const enriched = this._enrichWithSelection(data.content);
+        this._backend?.sendMessage(enriched);
       } else if (data.type === "open_file" && data.path) {
         this._openFile(data.path);
       } else if (data.type === "open_content" && data.content) {
@@ -273,6 +278,21 @@ export class ChatPanel {
 
     const instance = new ChatPanel(extensionUri, panel, sessionId, messages);
     ChatPanel._panels.set(sessionId, instance);
+  }
+
+  /** If the user has text selected in an editor, attach it as context. */
+  private _enrichWithSelection(content: string): string {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || editor.selection.isEmpty) return content;
+
+    const selection = editor.document.getText(editor.selection);
+    if (!selection.trim()) return content;
+
+    const filePath = vscode.workspace.asRelativePath(editor.document.uri);
+    const startLine = editor.selection.start.line + 1;
+    const endLine = editor.selection.end.line + 1;
+
+    return content + `\n\n<selection file="${filePath}" lines="${startLine}-${endLine}">\n${selection}\n</selection>`;
   }
 
   private _updateTitle(firstMessage: string) {
