@@ -402,6 +402,51 @@ export class OpenAIProvider implements LLMProvider {
       }
     }
 
-    return result;
+    // Enforce user/assistant alternation — merge consecutive same-role messages
+    // Gemini rejects non-alternating sequences
+    return this._enforceAlternation(result);
+  }
+
+  /** Merge consecutive same-role messages to enforce user/assistant alternation. */
+  private _enforceAlternation(messages: OpenAI.ChatCompletionMessageParam[]): OpenAI.ChatCompletionMessageParam[] {
+    if (messages.length === 0) return messages;
+
+    const merged: OpenAI.ChatCompletionMessageParam[] = [];
+
+    for (const msg of messages) {
+      const prev = merged.length > 0 ? merged[merged.length - 1] : null;
+
+      // "tool" role messages are fine after "assistant" — don't merge those
+      if (msg.role === "tool") {
+        merged.push(msg);
+        continue;
+      }
+
+      // Merge consecutive user messages
+      if (prev && prev.role === "user" && msg.role === "user") {
+        const prevContent = typeof prev.content === "string" ? prev.content : "";
+        const msgContent = typeof msg.content === "string" ? msg.content : "";
+        (prev as any).content = (prevContent + "\n\n" + msgContent).trim();
+        continue;
+      }
+
+      // Merge consecutive assistant messages (without tool_calls)
+      if (prev && prev.role === "assistant" && msg.role === "assistant"
+          && !(prev as any).tool_calls?.length && !(msg as any).tool_calls?.length) {
+        const prevContent = typeof prev.content === "string" ? prev.content : "";
+        const msgContent = typeof msg.content === "string" ? msg.content : "";
+        (prev as any).content = (prevContent + "\n\n" + msgContent).trim();
+        continue;
+      }
+
+      // If we'd have user→user with a tool message in between, insert a placeholder assistant
+      if (prev && prev.role !== "assistant" && prev.role !== "tool" && msg.role === "user") {
+        // Only if prev is also "user" — already handled above by merge
+      }
+
+      merged.push(msg);
+    }
+
+    return merged;
   }
 }
