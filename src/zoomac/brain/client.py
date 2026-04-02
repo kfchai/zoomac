@@ -104,8 +104,8 @@ async def run_with_tools(
         else:
             kwargs["system"] = system
 
-        # Extended thinking for supported models
-        if enable_thinking and ("sonnet-4" in model or "opus-4" in model or "claude-4" in model):
+        # Extended thinking — only on first call (planning), not during tool loop
+        if enable_thinking and iteration == 0 and ("sonnet-4" in model or "opus-4" in model or "claude-4" in model):
             kwargs["thinking"] = {"type": "enabled", "budget_tokens": min(4096, max_tokens)}
 
         if tools:

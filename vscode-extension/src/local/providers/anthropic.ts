@@ -53,7 +53,8 @@ export class AnthropicProvider implements LLMProvider {
     messages: ConversationMessage[],
     tools: ToolDefinition[],
     maxTokens: number,
-    onEvent: (event: StreamEvent) => void
+    onEvent: (event: StreamEvent) => void,
+    thinkingBudget = 4096
   ): Promise<LLMResponse> {
     const anthropicMessages = messages.map((m) => this._toAnthropicMessage(m));
 
@@ -74,11 +75,11 @@ export class AnthropicProvider implements LLMProvider {
       stream: true,
     };
 
-    // Extended thinking for supported models (Sonnet 4, Opus 4)
-    if (model.includes("sonnet-4") || model.includes("opus-4") || model.includes("claude-4")) {
+    // Extended thinking — only when budget > 0 and model supports it
+    if (thinkingBudget > 0 && (model.includes("sonnet-4") || model.includes("opus-4") || model.includes("claude-4"))) {
       params.thinking = {
         type: "enabled",
-        budget_tokens: Math.min(4096, maxTokens),
+        budget_tokens: Math.min(thinkingBudget, maxTokens),
       };
     }
 

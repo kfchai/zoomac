@@ -34,6 +34,7 @@ export class LocalAgentBackend implements Backend {
   private _memoryAvailable = false;
   private _mcpClients: McpClient[] = [];
   private _abortController?: AbortController;
+  private _thinkingBudget = 4096;
   autoEdit = true;
 
   /** Cumulative token usage for the session */
@@ -66,6 +67,13 @@ export class LocalAgentBackend implements Backend {
     this._provider = createProvider(config);
     this._model = config.model;
     this._maxTokens = config.maxTokens;
+    // Load thinking budget from settings (0 = disabled)
+    try {
+      const vscodeSettings = require("vscode").workspace.getConfiguration("zoomac");
+      this._thinkingBudget = (vscodeSettings.get("thinkingBudget") as number) ?? 4096;
+    } catch {
+      this._thinkingBudget = 4096;
+    }
     // Use a project-scoped, isolated memory directory
     const pathMod = require("path");
     const memoryDir = pathMod.join(workspaceRoot, ".zoomac", "memory");
@@ -629,7 +637,6 @@ export class LocalAgentBackend implements Backend {
       const onStreamEvent = (event: import("../local/providers/types").StreamEvent) => {
         if (event.type === "text_delta") {
           if (!streamStarted) {
-            // Create the live text element
             this._emitter.fire({ type: "text_delta", text: event.text } as unknown as WebviewMessage);
             streamStarted = true;
           } else {
@@ -639,8 +646,11 @@ export class LocalAgentBackend implements Backend {
         }
       };
 
+      // Only enable thinking on the first call (planning), not during tool loop iterations
+      const enableThinking = iteration === 0;
+
       // Call LLM with streaming
-      const response = await this._callProviderStreaming(onStreamEvent);
+      const response = await this._callProviderStreaming(onStreamEvent, enableThinking);
 
       // Finalize the streamed text (tell webview to close the live element)
       if (streamStarted) {
@@ -949,7 +959,8 @@ export class LocalAgentBackend implements Backend {
 
   /** Streaming version of _callProvider — emits text_delta events as tokens arrive */
   private async _callProviderStreaming(
-    onEvent: (event: import("../local/providers/types").StreamEvent) => void
+    onEvent: (event: import("../local/providers/types").StreamEvent) => void,
+    enableThinking = true
   ): Promise<LLMResponse> {
     const systemPrompt = this._currentSystemPrompt || this._baseSystemPrompt;
 
@@ -960,7 +971,8 @@ export class LocalAgentBackend implements Backend {
         messages: ConversationMessage[],
         tools: ToolDefinition[],
         maxTokens: number,
-        onEvent: (event: import("../local/providers/types").StreamEvent) => void
+        onEvent: (event: import("../local/providers/types").StreamEvent) => void,
+        thinkingBudget?: number
       ) => Promise<LLMResponse>;
       createMessageWithModel?: (
         model: string,
@@ -977,11 +989,14 @@ export class LocalAgentBackend implements Backend {
       ) => Promise<LLMResponse>;
     };
 
+    // Thinking budget: full on first call, 0 on tool-loop iterations
+    const thinkingBudget = enableThinking ? (this._thinkingBudget || 4096) : 0;
+
     // Try streaming first, fall back to non-streaming
     const call = () => {
       if (provider.createMessageStreamWithModel) {
         return provider.createMessageStreamWithModel(
-          this._model, systemPrompt, this._messages, TOOL_DEFINITIONS, this._maxTokens, onEvent
+          this._model, systemPrompt, this._messages, TOOL_DEFINITIONS, this._maxTokens, onEvent, thinkingBudget
         );
       }
       if (provider.createMessageWithModel) {

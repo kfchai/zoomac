@@ -93,6 +93,11 @@
           "default": 8192,
           "description": "Max tokens per LLM response"
         },
+        "zoomac.thinkingBudget": {
+          "type": "number",
+          "default": 4096,
+          "description": "Extended thinking token budget (0 = disabled). Only used on the first LLM call per message, not during tool loop iterations."
+        },
         "zoomac.memgatePath": {
           "type": "string",
           "default": "",
