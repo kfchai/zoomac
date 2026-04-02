@@ -210,6 +210,28 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       required: ["entity"],
     },
   },
+  // ── Python execution tool ──
+  {
+    name: "python_exec",
+    description:
+      "Execute inline Python code and return stdout/stderr. " +
+      "Use for quick calculations, data exploration, testing snippets, " +
+      "or running scripts without creating a file.",
+    input_schema: {
+      type: "object",
+      properties: {
+        code: {
+          type: "string",
+          description: "Python code to execute",
+        },
+        timeout: {
+          type: "number",
+          description: "Timeout in milliseconds (default: 30000)",
+        },
+      },
+      required: ["code"],
+    },
+  },
   // ── Sub-agent tool ──
   {
     name: "agent",

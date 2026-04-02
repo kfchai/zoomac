@@ -55,11 +55,32 @@ async def handle_slash_command(
             return {"type": "model_switch", "model": args}
         return {"type": "model_show", "model": model}
 
+    if cmd == "/plan":
+        if not args:
+            return {"type": "display", "content": "Usage: `/plan <task description>`"}
+        return {
+            "type": "inject",
+            "content": (
+                "The user wants you to plan before executing. "
+                "Create a detailed step-by-step plan for the following task. "
+                "Use tools (read, glob, grep) to explore the codebase and understand what's needed, "
+                "but do NOT make any changes yet (no write, edit, or destructive bash). "
+                "After exploration, output a numbered plan with:\n"
+                "1. Each step described clearly\n"
+                "2. Which files will be modified\n"
+                "3. What changes will be made\n"
+                "4. Any risks or considerations\n\n"
+                "End your response with: **Awaiting approval. Reply 'go' to execute or suggest changes.**\n\n"
+                f"Task: {args}"
+            ),
+        }
+
     if cmd == "/help":
         return {
             "type": "display",
             "content": (
                 "### Commands\n"
+                "- `/plan <task>` — Plan before executing (explore, then confirm)\n"
                 "- `/commit [note]` — Auto-commit with generated message\n"
                 "- `/review [focus]` — Get a 2nd opinion from a reviewer agent\n"
                 "- `/clear` — Clear conversation\n"

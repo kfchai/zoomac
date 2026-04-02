@@ -833,6 +833,9 @@
       case "edit":
         renderEditBody(body, data);
         break;
+      case "python_exec":
+        renderPythonBody(body, data);
+        break;
       case "agent":
         renderAgentToolBody(body, data);
         break;
@@ -1014,6 +1017,52 @@
         });
       });
       body.appendChild(link);
+    }
+  }
+
+  function renderPythonBody(body, data) {
+    // Show code + output, similar to bash but with Python labels
+    if (data.command || data.content) {
+      const codeLabel = document.createElement("div");
+      codeLabel.className = "bash-section-label";
+      codeLabel.textContent = "CODE";
+      body.appendChild(codeLabel);
+
+      const codeBlock = document.createElement("div");
+      codeBlock.className = "bash-code";
+      codeBlock.textContent = data.command || data.content || "";
+      body.appendChild(codeBlock);
+    }
+
+    if (data.output != null) {
+      const outLabel = document.createElement("div");
+      outLabel.className = "bash-section-label";
+      outLabel.textContent = "OUTPUT";
+      body.appendChild(outLabel);
+
+      if (!data.output || data.output === "(No output)") {
+        const emptyEl = document.createElement("div");
+        emptyEl.className = "bash-empty";
+        emptyEl.textContent = "(No output)";
+        body.appendChild(emptyEl);
+      } else {
+        const lines = data.output.split("\n");
+        const preview = lines.slice(0, 4).join("\n");
+        const outBlock = document.createElement("div");
+        outBlock.className = "bash-code" + (lines.length > 4 ? " bash-code-compact" : "");
+        outBlock.textContent = preview;
+        if (lines.length > 4) {
+          const fade = document.createElement("div");
+          fade.className = "bash-code-fade";
+          outBlock.appendChild(fade);
+          outBlock.style.cursor = "pointer";
+          const id = nextToolId();
+          outBlock.addEventListener("click", () => {
+            vscode.postMessage({ type: "open_content", title: "Python output (" + id + ")", content: data.output });
+          });
+        }
+        body.appendChild(outBlock);
+      }
     }
   }
 
@@ -1241,6 +1290,7 @@
       search: "Search",
       glob: "Glob",
       grep: "Grep",
+      python_exec: "Python",
       agent: "Agent",
     };
     return names[tool] || tool.charAt(0).toUpperCase() + tool.slice(1);

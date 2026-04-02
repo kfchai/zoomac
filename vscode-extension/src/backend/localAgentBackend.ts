@@ -372,9 +372,43 @@ export class LocalAgentBackend implements Backend {
         return true;
       }
 
+      case "/plan": {
+        if (!args) {
+          this._emitter.fire({ type: "agent", content: "Usage: `/plan <task description>`\n\nThe agent will create a plan for your review before executing." });
+          return true;
+        }
+        this._emitter.fire({ type: "user", content });
+        this._emitter.fire({ type: "spinner", text: "Creating plan...", active: true } as WebviewMessage);
+
+        // Ask the LLM to create a plan WITHOUT executing anything
+        const planPrompt =
+          "The user wants you to plan before executing. " +
+          "Create a detailed step-by-step plan for the following task. " +
+          "Use tools (read, glob, grep) to explore the codebase and understand what's needed, " +
+          "but do NOT make any changes yet (no write, edit, or bash that modifies files). " +
+          "After exploration, output a numbered plan with:\n" +
+          "1. Each step described clearly\n" +
+          "2. Which files will be modified\n" +
+          "3. What changes will be made\n" +
+          "4. Any risks or considerations\n\n" +
+          "End your response with: **Awaiting approval. Reply 'go' to execute or suggest changes.**\n\n" +
+          `Task: ${args}`;
+
+        this._messages.push({ role: "user", content: planPrompt });
+        try {
+          await this._injectMemoryContext(args);
+          await this._runToolLoop();
+        } catch (err: unknown) {
+          this._emitter.fire({ type: "spinner", text: "", active: false } as WebviewMessage);
+          this._emitter.fire({ type: "error", content: `Plan failed: ${err}` });
+        }
+        return true;
+      }
+
       case "/help": {
         this._emitter.fire({ type: "agent", content:
           "### Commands\n" +
+          "- `/plan <task>` — Plan before executing (explore, then confirm)\n" +
           "- `/commit [note]` — Auto-commit with generated message\n" +
           "- `/review [focus]` — Get a 2nd opinion from a reviewer agent\n" +
           "- `/clear` — Clear conversation\n" +
@@ -991,6 +1025,11 @@ export class LocalAgentBackend implements Backend {
       case "grep":
         data.content = result;
         data.description = input.pattern as string;
+        break;
+      case "python_exec":
+        data.command = (input.code as string)?.substring(0, 200);
+        data.output = result;
+        data.description = "Python script";
         break;
       default:
         data.content = result;

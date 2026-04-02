@@ -380,6 +380,7 @@ body {
 .tool-block[data-tool="glob"]   .tool-label,
 .tool-block[data-tool="grep"]   .tool-label,
 .tool-block[data-tool="search"] .tool-label { color: var(--z-blue); }
+.tool-block[data-tool="python_exec"] .tool-label { color: #3572a5; }
 .tool-block[data-tool="agent"]  .tool-label { color: var(--z-purple); }
 .tool-block[data-tool="memory_search"] .tool-label,
 .tool-block[data-tool="memory_store"]  .tool-label,
