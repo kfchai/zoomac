@@ -130,10 +130,17 @@ export class OpenAIProvider implements LLMProvider {
     tools: ToolDefinition[],
     maxTokens: number
   ): Promise<LLMResponse> {
+    const converted = this._convertMessages(messages);
     const openaiMessages: OpenAI.ChatCompletionMessageParam[] = [
       { role: "system", content: system },
-      ...this._convertMessages(messages),
+      ...converted,
     ];
+
+    // Debug: log messages being sent
+    for (const m of converted) {
+      const preview = typeof m.content === "string" ? m.content?.substring(0, 60) : JSON.stringify(m.content)?.substring(0, 60);
+      console.log(`[openai] msg: role=${m.role}, content=${preview}, tool_calls=${(m as any).tool_calls?.length || 0}, tool_call_id=${(m as any).tool_call_id || ""}`);
+    }
 
     const params: OpenAI.ChatCompletionCreateParams = {
       model,
@@ -158,7 +165,8 @@ export class OpenAIProvider implements LLMProvider {
     } catch (err: unknown) {
       const e = err as any;
       const detail = e?.error?.message || e?.message || e?.body || String(err);
-      throw new Error(`API error: ${detail}`);
+      const roles = converted.map((m: any) => `${m.role}${m.tool_call_id ? "(tool)" : ""}${m.tool_calls ? `(${m.tool_calls.length}calls)` : ""}`).join("→");
+      throw new Error(`API error: ${detail} | msg flow: [sys]→${roles}`);
     }
     const choice = response.choices[0];
 

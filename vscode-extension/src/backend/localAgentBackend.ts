@@ -84,10 +84,12 @@ export class LocalAgentBackend implements Backend {
     });
     this._toolHandlers = createToolHandlers(workspaceRoot, this._memoryBridge);
 
-    // Initialize output channel for debugging
+    // Use existing Zoomac output channel for debugging
     try {
       const vscodeModule = require("vscode");
+      // Find existing channel or create — outputChannels aren't retrievable, so create new
       this._outputChannel = vscodeModule.window.createOutputChannel("Zoomac Agent");
+      this._outputChannel!.appendLine(`[init] model=${config.model}, provider=${config.provider}, workspace=${workspaceRoot}`);
     } catch {}
 
     // Register sub-agent tool handler
