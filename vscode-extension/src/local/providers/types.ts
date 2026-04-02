@@ -92,6 +92,14 @@ export function createProvider(config: ProviderConfig): LLMProvider {
         config.baseUrl || "https://generativelanguage.googleapis.com/v1beta/openai"
       );
     }
+    case "dashscope":
+    case "alibaba": {
+      const { OpenAIProvider } = require("./openai");
+      return new OpenAIProvider(
+        config.apiKey,
+        config.baseUrl || "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+      );
+    }
     case "ollama": {
       const { OpenAIProvider } = require("./openai");
       return new OpenAIProvider(
