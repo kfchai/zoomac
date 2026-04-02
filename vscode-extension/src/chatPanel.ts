@@ -332,6 +332,12 @@ export class ChatPanel {
   // ── Backend setup (unchanged) ──
 
   private async _createAndStartBackend(): Promise<void> {
+    // Preserve conversation history across backend switches
+    let savedMessages: unknown[] | undefined;
+    if (this._backend && this._messages.length > 0) {
+      savedMessages = this._messages;
+    }
+
     await this._backend?.stop();
 
     const config = vscode.workspace.getConfiguration("zoomac");
@@ -346,6 +352,7 @@ export class ChatPanel {
         config.get<string>("apiKey") ||
         process.env.ANTHROPIC_API_KEY ||
         process.env.OPENAI_API_KEY ||
+        process.env.GEMINI_API_KEY ||
         "";
       const baseUrl = config.get<string>("baseUrl") || undefined;
       const model = config.get<string>("model") || "claude-sonnet-4-20250514";
@@ -358,7 +365,7 @@ export class ChatPanel {
         this._postToWebview({
           type: "error",
           content:
-            "No API key configured. Set zoomac.apiKey in settings or ANTHROPIC_API_KEY / OPENAI_API_KEY env variable.",
+            "No API key configured. Set zoomac.apiKey in settings or ANTHROPIC_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY env variable.",
         });
         return;
       }
@@ -377,6 +384,12 @@ export class ChatPanel {
     });
 
     await this._backend.start();
+
+    // Restore conversation history into the new backend
+    if (savedMessages && savedMessages.length > 0) {
+      this._backend.restoreHistory?.(savedMessages);
+      ChatPanel._log?.appendLine(`[createBackend] restored ${savedMessages.length} messages to new backend`);
+    }
   }
 
   private async _toggleMode(): Promise<void> {
