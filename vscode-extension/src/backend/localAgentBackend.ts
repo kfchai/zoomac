@@ -33,8 +33,8 @@ export class LocalAgentBackend implements Backend {
   private _memoryBridge: MemoryBridge;
   private _memoryAvailable = false;
   private _mcpClients: McpClient[] = [];
-  private _abortController?: AbortController;
   private _thinkingBudget = 4096;
+  private _cancelled = false;
   autoEdit = true;
 
   /** Cumulative token usage for the session */
@@ -210,19 +210,27 @@ export class LocalAgentBackend implements Backend {
     });
   }
 
+  /** Cancel the current in-flight request (stop button). */
+  cancel(): void {
+    this._cancelled = true;
+    // Reject pending confirmations and prompts so the loop unblocks
+    for (const [, resolve] of this._pendingConfirmations) {
+      resolve(false);
+    }
+    this._pendingConfirmations.clear();
+    for (const [, resolve] of this._pendingPrompts) {
+      resolve("[cancelled]");
+    }
+    this._pendingPrompts.clear();
+  }
+
   async stop(): Promise<void> {
-    this._abortController?.abort();
-    this._abortController = undefined;
+    this.cancel();
     this._memoryBridge.dispose();
     for (const client of this._mcpClients) {
       client.disconnect();
     }
     this._mcpClients = [];
-    // Reject all pending confirmations
-    for (const [, resolve] of this._pendingConfirmations) {
-      resolve(false);
-    }
-    this._pendingConfirmations.clear();
   }
 
   /**
@@ -583,6 +591,9 @@ export class LocalAgentBackend implements Backend {
   }
 
   async sendMessage(content: string): Promise<void> {
+    // Reset cancellation flag on new message
+    this._cancelled = false;
+
     // Handle slash commands
     if (content.startsWith("/")) {
       const handled = await this._handleSlashCommand(content);
@@ -624,6 +635,13 @@ export class LocalAgentBackend implements Backend {
 
   private async _runToolLoop(): Promise<void> {
     for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
+      // Check if cancelled
+      if (this._cancelled) {
+        this._emitter.fire({ type: "spinner", text: "", active: false } as WebviewMessage);
+        this._emitter.fire({ type: "agent", content: "*Interrupted.*" });
+        return;
+      }
+
       // Compact context if approaching the model's limit
       await this._compactIfNeeded();
 

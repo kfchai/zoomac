@@ -141,7 +141,7 @@ export class ChatPanel {
       } else if (data.type === "switch_mode") {
         this._toggleMode();
       } else if (data.type === "stop") {
-        this._backend?.stop();
+        (this._backend as any)?.cancel?.() || this._backend?.stop();
       } else if (data.type === "save_history") {
         // Webview sends its current message list for persistence
         this._messages = data.messages || [];
