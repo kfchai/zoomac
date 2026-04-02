@@ -69,7 +69,7 @@
         },
         "zoomac.provider": {
           "type": "string",
-          "enum": ["anthropic", "openai", "gemini", "dashscope", "ollama"],
+          "enum": ["anthropic", "openai", "gemini", "moonshot", "dashscope", "ollama"],
           "default": "anthropic",
           "description": "LLM provider for local mode"
         },

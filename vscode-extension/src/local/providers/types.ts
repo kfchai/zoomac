@@ -92,6 +92,14 @@ export function createProvider(config: ProviderConfig): LLMProvider {
         config.baseUrl || "https://generativelanguage.googleapis.com/v1beta/openai"
       );
     }
+    case "moonshot":
+    case "kimi": {
+      const { OpenAIProvider } = require("./openai");
+      return new OpenAIProvider(
+        config.apiKey,
+        config.baseUrl || "https://api.moonshot.cn/v1"
+      );
+    }
     case "dashscope":
     case "alibaba": {
       const { OpenAIProvider } = require("./openai");
