@@ -35,6 +35,7 @@ export class LocalAgentBackend implements Backend {
   private _mcpClients: McpClient[] = [];
   private _thinkingBudget = 4096;
   private _cancelled = false;
+  private _outputChannel: { appendLine: (msg: string) => void } | null = null;
   autoEdit = true;
 
   /** Cumulative token usage for the session */
@@ -82,6 +83,12 @@ export class LocalAgentBackend implements Backend {
       workspaceRoot,
     });
     this._toolHandlers = createToolHandlers(workspaceRoot, this._memoryBridge);
+
+    // Initialize output channel for debugging
+    try {
+      const vscodeModule = require("vscode");
+      this._outputChannel = vscodeModule.window.createOutputChannel("Zoomac Agent");
+    } catch {}
 
     // Register sub-agent tool handler
     this._toolHandlers.agent = this._runSubAgent.bind(this);
@@ -614,10 +621,11 @@ export class LocalAgentBackend implements Backend {
     } as WebviewMessage);
 
     try {
-      // Auto-retrieve relevant memories before calling the LLM
+      this._log(`[sendMessage] "${content.substring(0, 80)}", model=${this._model}, messages=${this._messages.length}`);
       await this._injectMemoryContext(content);
       await this._runToolLoop();
     } catch (err: unknown) {
+      this._log(`[sendMessage] ERROR: ${err}`);
       this._emitter.fire({
         type: "spinner",
         text: "",
@@ -667,8 +675,19 @@ export class LocalAgentBackend implements Backend {
       // Only enable thinking on the first call (planning), not during tool loop iterations
       const enableThinking = iteration === 0;
 
-      // Call LLM with streaming
-      const response = await this._callProviderStreaming(onStreamEvent, enableThinking);
+      // Call LLM
+      this._log(`[toolLoop] iteration=${iteration}, calling provider...`);
+      let response: LLMResponse;
+      try {
+        response = await this._callProviderStreaming(onStreamEvent, enableThinking);
+        this._log(`[toolLoop] response: stopReason=${response.stopReason}, blocks=${response.content.length}, streamStarted=${streamStarted}`);
+        for (const b of response.content) {
+          this._log(`[toolLoop]   block: type=${b.type}, text=${b.text?.substring(0, 80) || ""}, name=${b.name || ""}`);
+        }
+      } catch (err: unknown) {
+        this._log(`[toolLoop] ERROR: ${err}`);
+        throw err;
+      }
 
       // Finalize the streamed text (tell webview to close the live element)
       if (streamStarted) {
@@ -690,8 +709,11 @@ export class LocalAgentBackend implements Backend {
           const textParts = response.content
             .filter((b) => b.type === "text" && b.text)
             .map((b) => b.text!);
+          this._log(`[toolLoop] final text parts: ${textParts.length}, total chars: ${textParts.join("").length}`);
           if (textParts.length > 0) {
             this._emitter.fire({ type: "agent", content: textParts.join("\n") });
+          } else {
+            this._log(`[toolLoop] WARNING: no text in response and no tool calls`);
           }
         }
 
@@ -1366,6 +1388,10 @@ export class LocalAgentBackend implements Backend {
        cacheWrite * cacheWritePrice +
        output * outputPrice) / 1_000_000
     );
+  }
+
+  private _log(msg: string): void {
+    this._outputChannel?.appendLine(msg);
   }
 
   private _emitContextUsage(): void {
