@@ -88,11 +88,15 @@ async def edit_file(deps: ZoomacDeps, file_path: str, old_string: str, new_strin
 _bg_counter = 0
 
 
-async def run_bash(deps: ZoomacDeps, command: str, timeout: int = 120000) -> str:
-    """Execute a shell command. Auto-backgrounds after 10s if still running."""
+async def run_bash(deps: ZoomacDeps, command: str, timeout: int = 0) -> str:
+    """Execute a shell command. Auto-backgrounds after 10s unless timeout is explicitly set."""
     global _bg_counter
     project_dir = getattr(deps, "project_dir", None) or os.getcwd()
-    bg_threshold = 10  # seconds before backgrounding
+    # If timeout explicitly set, use it as foreground (agent wants to wait)
+    # If default (0), auto-background after 10s
+    explicit_timeout = timeout > 0
+    timeout_sec = timeout / 1000 if explicit_timeout else 120
+    bg_threshold = timeout_sec if explicit_timeout else 10
 
     try:
         # Try foreground first with short timeout

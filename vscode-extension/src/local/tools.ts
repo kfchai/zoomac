@@ -86,7 +86,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         timeout: {
           type: "number",
-          description: "Timeout in milliseconds (default: 30000)",
+          description: "Timeout in milliseconds. Commands auto-background after 10s unless timeout is set. Set timeout to wait longer in foreground (e.g., 60000 for sleep+read patterns).",
         },
       },
       required: ["command"],

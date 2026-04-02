@@ -161,8 +161,11 @@ function runBash(workspaceRoot: string): ToolHandler {
   return async (input) => {
     if (!input.command) return "Error: command is required";
     const command = input.command as string;
+    const explicitTimeout = input.timeout != null;
     const timeout = (input.timeout as number) || 120000;
-    const bgThreshold = 10000; // 10s — switch to background after this
+    // Only auto-background if no explicit timeout was set
+    // If agent sets timeout (e.g., for sleep+read), respect it as foreground
+    const bgThreshold = explicitTimeout ? timeout : 10000;
 
     return new Promise<string>((resolve) => {
       let settled = false;
