@@ -45,6 +45,7 @@ function resolvePath(workspaceRoot: string, filePath: string): string {
 
 function readFile(workspaceRoot: string): ToolHandler {
   return async (input) => {
+    if (!input.file_path) return "Error: file_path is required";
     const filePath = resolvePath(workspaceRoot, input.file_path as string);
 
     try {
@@ -66,6 +67,8 @@ function readFile(workspaceRoot: string): ToolHandler {
 
 function writeFile(workspaceRoot: string): ToolHandler {
   return async (input) => {
+    if (!input.file_path) return "Error: file_path is required";
+    if (input.content == null) return "Error: content is required";
     const filePath = resolvePath(workspaceRoot, input.file_path as string);
     const content = input.content as string;
 
@@ -84,6 +87,9 @@ function writeFile(workspaceRoot: string): ToolHandler {
 
 function editFile(workspaceRoot: string): ToolHandler {
   return async (input) => {
+    if (!input.file_path) return "Error: file_path is required";
+    if (input.old_string == null) return "Error: old_string is required";
+    if (input.new_string == null) return "Error: new_string is required";
     const filePath = resolvePath(workspaceRoot, input.file_path as string);
     const oldString = input.old_string as string;
     const newString = input.new_string as string;
@@ -153,6 +159,7 @@ let _bgTaskId = 0;
 
 function runBash(workspaceRoot: string): ToolHandler {
   return async (input) => {
+    if (!input.command) return "Error: command is required";
     const command = input.command as string;
     const timeout = (input.timeout as number) || 120000;
     const bgThreshold = 10000; // 10s — switch to background after this
@@ -260,6 +267,8 @@ function globFiles(workspaceRoot: string): ToolHandler {
 function grepFiles(workspaceRoot: string): ToolHandler {
   return async (input) => {
     const pattern = input.pattern as string;
+    if (!pattern) return "Error: pattern is required";
+
     const searchPath = input.path
       ? resolvePath(workspaceRoot, input.path as string)
       : workspaceRoot;

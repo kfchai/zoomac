@@ -57,7 +57,14 @@ export class OpenAIProvider implements LLMProvider {
       }));
     }
 
-    const response = await this._client.chat.completions.create(params);
+    let response;
+    try {
+      response = await this._client.chat.completions.create(params);
+    } catch (err: unknown) {
+      const e = err as any;
+      const detail = e?.error?.message || e?.message || e?.body || String(err);
+      throw new Error(`API error: ${detail}`);
+    }
     const choice = response.choices[0];
 
     if (!choice) {
@@ -145,7 +152,14 @@ export class OpenAIProvider implements LLMProvider {
       }));
     }
 
-    const response = await this._client.chat.completions.create(params);
+    let response;
+    try {
+      response = await this._client.chat.completions.create(params);
+    } catch (err: unknown) {
+      const e = err as any;
+      const detail = e?.error?.message || e?.message || e?.body || String(err);
+      throw new Error(`API error: ${detail}`);
+    }
     const choice = response.choices[0];
 
     if (!choice) {
