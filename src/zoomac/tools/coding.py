@@ -85,19 +85,24 @@ async def edit_file(deps: ZoomacDeps, file_path: str, old_string: str, new_strin
         return f"Error editing {file_path}: {e}"
 
 
-async def run_bash(deps: ZoomacDeps, command: str, timeout: int = 30000) -> str:
-    """Execute a shell command in the project directory."""
+_bg_counter = 0
+
+
+async def run_bash(deps: ZoomacDeps, command: str, timeout: int = 120000) -> str:
+    """Execute a shell command. Auto-backgrounds after 10s if still running."""
+    global _bg_counter
     project_dir = getattr(deps, "project_dir", None) or os.getcwd()
-    timeout_sec = timeout / 1000
+    bg_threshold = 10  # seconds before backgrounding
 
     try:
+        # Try foreground first with short timeout
         result = subprocess.run(
             command,
             shell=True,
             cwd=project_dir,
             capture_output=True,
             text=True,
-            timeout=timeout_sec,
+            timeout=bg_threshold,
         )
         output = result.stdout
         if result.stderr:
@@ -108,9 +113,24 @@ async def run_bash(deps: ZoomacDeps, command: str, timeout: int = 30000) -> str:
             output = output[:10000] + f"\n... [truncated, {len(output)} total chars]"
         return output
     except subprocess.TimeoutExpired:
-        return f"[TIMED OUT after {timeout_sec}s]"
+        pass  # Fall through to background mode
     except Exception as e:
         return f"Error: {e}"
+
+    # Background mode — command exceeded threshold, run detached
+    try:
+        _bg_counter += 1
+        task_id = f"bg_{_bg_counter}"
+        output_file = os.path.join(project_dir, f".zoomac_bg_{task_id}.log")
+        bg_cmd = f"({command}) > {output_file} 2>&1 &"
+        subprocess.Popen(bg_cmd, shell=True, cwd=project_dir)
+        return (
+            f"Command running in background (ID: {task_id}).\n"
+            f"Output is being written to: {output_file}\n"
+            f"Check results with: cat {output_file}"
+        )
+    except Exception as e:
+        return f"Error starting background task: {e}"
 
 
 async def glob_files(deps: ZoomacDeps, pattern: str, path: str = "") -> str:

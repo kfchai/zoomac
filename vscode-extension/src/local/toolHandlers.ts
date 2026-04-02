@@ -148,45 +148,84 @@ function findGitBash(): string {
 
 const _gitBash = findGitBash();
 
+/** Background task counter */
+let _bgTaskId = 0;
+
 function runBash(workspaceRoot: string): ToolHandler {
   return async (input) => {
     const command = input.command as string;
-    const timeout = (input.timeout as number) || 30000;
+    const timeout = (input.timeout as number) || 120000;
+    const bgThreshold = 10000; // 10s — switch to background after this
 
     return new Promise<string>((resolve) => {
-      exec(
+      let settled = false;
+      let partialStdout = "";
+      let partialStderr = "";
+
+      const child = exec(
         command,
         {
           cwd: workspaceRoot,
-          timeout,
           maxBuffer: 1024 * 1024,
           shell: _gitBash,
         },
         (error, stdout, stderr) => {
+          if (settled) return; // Already moved to background
+          settled = true;
+
           let output = "";
-          if (stdout) {
-            output += stdout;
-          }
-          if (stderr) {
-            output += output ? `\nSTDERR:\n${stderr}` : stderr;
-          }
-          if (error && error.killed) {
-            output += `\n[TIMED OUT after ${timeout}ms]`;
-          } else if (error && !stdout && !stderr) {
+          if (stdout) output += stdout;
+          if (stderr) output += output ? `\nSTDERR:\n${stderr}` : stderr;
+          if (error && !stdout && !stderr) {
             output = `Error: ${error.message}`;
           }
-          if (!output) {
-            output = "(Bash completed with no output)";
-          }
-          // Truncate very large output
+          if (!output) output = "(Bash completed with no output)";
           if (output.length > 10000) {
-            output =
-              output.substring(0, 10000) +
-              `\n... [truncated, ${output.length} total chars]`;
+            output = output.substring(0, 10000) + `\n... [truncated, ${output.length} total chars]`;
           }
           resolve(output);
         }
       );
+
+      // Collect partial output while running
+      child.stdout?.on("data", (data: string) => { partialStdout += data; });
+      child.stderr?.on("data", (data: string) => { partialStderr += data; });
+
+      // After bgThreshold, move to background instead of killing
+      const bgTimer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+
+        const taskId = "bg_" + (++_bgTaskId).toString(36);
+        const outputFile = path.join(workspaceRoot, `.zoomac_bg_${taskId}.log`);
+
+        // Pipe remaining output to file
+        const fileStream = fs.createWriteStream(outputFile, { flags: "a" });
+        // Write what we have so far
+        if (partialStdout) fileStream.write(partialStdout);
+        if (partialStderr) fileStream.write("\nSTDERR:\n" + partialStderr);
+
+        child.stdout?.pipe(fileStream);
+        child.stderr?.pipe(fileStream);
+
+        child.on("exit", (code) => {
+          fileStream.write(`\n[Process exited with code ${code}]`);
+          fileStream.end();
+        });
+
+        // Kill after full timeout to prevent zombie processes
+        setTimeout(() => {
+          try { child.kill(); } catch {}
+        }, timeout - bgThreshold);
+
+        const partial = partialStdout.substring(0, 500);
+        resolve(
+          `Command running in background (ID: ${taskId}).\n` +
+          (partial ? `Partial output so far:\n${partial}\n` : "") +
+          `Output is being written to: ${outputFile}\n` +
+          `Check results with: cat ${outputFile}`
+        );
+      }, bgThreshold);
     });
   };
 }
