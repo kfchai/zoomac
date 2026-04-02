@@ -104,6 +104,7 @@ export type WebviewMessage =
   | { type: "spinner"; text: string; active: boolean }
   | { type: "sub_agent"; data: OutboundSubAgent }
   | { type: "confirm_tool"; id: string; tool: string; description: string; input: Record<string, unknown> }
+  | { type: "ask_user"; id: string; question: string; options: string[] }
   | { type: "text_delta"; text: string }
   | { type: "context_usage"; used: number; max: number; percent: number }
   | { type: "token_usage"; input: number; output: number; cacheRead: number; cacheWrite: number; totalInput: number; totalOutput: number; totalCacheRead: number; totalCacheWrite: number; cost: number; totalCost: number; apiCalls: number }

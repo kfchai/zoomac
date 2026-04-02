@@ -602,6 +602,80 @@ body {
   content: "└─ ";
 }
 
+/* ===== User Prompt Block ===== */
+.prompt-block {
+  margin: 6px 16px 6px 32px;
+  padding: 10px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--z-blue);
+  background: rgba(88, 166, 255, 0.06);
+}
+
+.prompt-question {
+  font-size: 13px;
+  color: var(--z-fg);
+  margin-bottom: 8px;
+  line-height: 1.5;
+}
+
+.prompt-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.prompt-option-btn {
+  padding: 4px 14px;
+  border-radius: 4px;
+  border: 1px solid var(--z-blue);
+  background: rgba(88, 166, 255, 0.1);
+  color: var(--z-blue);
+  font-size: 12px;
+  font-family: var(--z-font);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.prompt-option-btn:hover {
+  background: rgba(88, 166, 255, 0.2);
+}
+
+.prompt-input-row {
+  display: flex;
+  gap: 4px;
+}
+
+.prompt-input {
+  flex: 1;
+  background: var(--vscode-input-background, rgba(255,255,255,0.06));
+  color: var(--z-fg);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: var(--z-font);
+  outline: none;
+}
+
+.prompt-input:focus {
+  border-color: var(--z-blue);
+}
+
+.prompt-send-btn {
+  padding: 4px 10px;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--z-fg);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.prompt-send-btn:hover {
+  background: rgba(255,255,255,0.06);
+}
+
 /* ===== Confirmation Block ===== */
 .confirm-block {
   margin: 4px 16px 4px 32px;

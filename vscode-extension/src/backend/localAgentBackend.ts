@@ -45,6 +45,8 @@ export class LocalAgentBackend implements Backend {
 
   /** Pending confirmation resolvers keyed by confirmation ID */
   private _pendingConfirmations = new Map<string, (allowed: boolean) => void>();
+  /** Pending user prompt resolvers */
+  private _pendingPrompts = new Map<string, (answer: string) => void>();
   private _confirmCounter = 0;
 
   private readonly _emitter = new vscode.EventEmitter<WebviewMessage>();
@@ -75,6 +77,16 @@ export class LocalAgentBackend implements Backend {
 
     // Register sub-agent tool handler
     this._toolHandlers.agent = this._runSubAgent.bind(this);
+
+    // Register ask_user tool handler
+    this._toolHandlers.ask_user = async (input: Record<string, unknown>) => {
+      const question = input.question as string;
+      const options = (input.options as string[]) || [];
+      // Clear spinner while waiting for user
+      this._emitter.fire({ type: "spinner", text: "", active: false } as WebviewMessage);
+      const answer = await this._askUser(question, options);
+      return `User answered: ${answer}`;
+    };
   }
 
   /** Sub-agent: spawns a separate LLM call with read-only tools for research tasks. */
@@ -267,6 +279,31 @@ export class LocalAgentBackend implements Backend {
       this._pendingConfirmations.delete(id);
       resolve(allowed);
     }
+  }
+
+  /** Resolve a pending user prompt (from ask_user tool). */
+  resolvePrompt(id: string, answer: string): void {
+    const resolve = this._pendingPrompts.get(id);
+    if (resolve) {
+      this._pendingPrompts.delete(id);
+      resolve(answer);
+    }
+  }
+
+  /** Ask the user a question with optional choices. Returns their answer. */
+  private _askUser(question: string, options: string[]): Promise<string> {
+    const id = "prompt_" + (++this._confirmCounter);
+
+    return new Promise<string>((resolve) => {
+      this._pendingPrompts.set(id, resolve);
+
+      this._emitter.fire({
+        type: "ask_user",
+        id,
+        question,
+        options: options || [],
+      } as unknown as WebviewMessage);
+    });
   }
 
   /** Ask the user for permission to run a destructive tool. Returns true if allowed. */

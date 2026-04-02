@@ -207,6 +207,17 @@ async def python_exec(deps: ZoomacDeps, code: str, timeout: int = 30000) -> str:
         return f"Error: {e}"
 
 
+async def ask_user(deps: ZoomacDeps, question: str, options: str = "") -> str:
+    """Ask the user a question and wait for their response (CLI mode: stdin)."""
+    print(f"\n🔵 Agent asks: {question}")
+    if options:
+        opt_list = [o.strip() for o in options.split(",")]
+        for i, opt in enumerate(opt_list, 1):
+            print(f"  {i}. {opt}")
+    answer = input("Your answer: ").strip()
+    return f"User answered: {answer}"
+
+
 def build_coding_tool_registry() -> ToolRegistry:
     """Create the registry for direct coding tools."""
     registry = ToolRegistry(name="coding")
@@ -275,6 +286,17 @@ def build_coding_tool_registry() -> ToolRegistry:
                 approval_action_type=ActionType.RUN_COMMAND.value,
             ),
             handler=python_exec,
+        ),
+        ToolDefinition(
+            spec=ToolSpec(
+                name="ask_user",
+                description=(
+                    "Ask the user a question and wait for their response. "
+                    "Use when you need clarification, confirmation, or a choice between options."
+                ),
+                capabilities=ToolCapabilities(read_only=True),
+            ),
+            handler=ask_user,
         ),
     ])
     return registry

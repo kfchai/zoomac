@@ -232,6 +232,29 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       required: ["code"],
     },
   },
+  // ── Ask user tool ──
+  {
+    name: "ask_user",
+    description:
+      "Ask the user a question and wait for their response. " +
+      "Use when you need clarification, confirmation, or a choice between options. " +
+      "Provide clear options when possible.",
+    input_schema: {
+      type: "object",
+      properties: {
+        question: {
+          type: "string",
+          description: "The question to ask the user",
+        },
+        options: {
+          type: "array",
+          description: "Optional list of choices (e.g. ['Yes', 'No', 'Skip']). If empty, user types a free-form answer.",
+          items: { type: "string" },
+        },
+      },
+      required: ["question"],
+    },
+  },
   // ── Sub-agent tool ──
   {
     name: "agent",

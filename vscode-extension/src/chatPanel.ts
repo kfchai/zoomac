@@ -132,6 +132,8 @@ export class ChatPanel {
         this._openDiff(data.file_path, data.old_text, data.new_text);
       } else if (data.type === "confirm_response" && data.id) {
         this._backend?.resolveConfirmation?.(data.id, !!data.allowed);
+      } else if (data.type === "prompt_response" && data.id) {
+        (this._backend as any)?.resolvePrompt?.(data.id, data.answer || "");
       } else if (data.type === "toggle_auto_edit") {
         if (this._backend) {
           this._backend.autoEdit = !!data.enabled;

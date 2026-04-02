@@ -119,6 +119,10 @@
       case "text_delta":
         appendTextDelta(data.text);
         break;
+      case "ask_user":
+        clearSpinner();
+        renderUserPrompt(data);
+        break;
       case "confirm_tool":
         clearSpinner();
         renderConfirmation(data);
@@ -354,6 +358,65 @@
   }
 
   // ===== Confirmation UI =====
+
+  function renderUserPrompt(data) {
+    const block = document.createElement("div");
+    block.className = "prompt-block";
+
+    // Question
+    const questionEl = document.createElement("div");
+    questionEl.className = "prompt-question";
+    questionEl.textContent = data.question || "?";
+    block.appendChild(questionEl);
+
+    const actions = document.createElement("div");
+    actions.className = "prompt-actions";
+
+    if (data.options && data.options.length > 0) {
+      // Render option buttons
+      data.options.forEach((opt) => {
+        const btn = document.createElement("button");
+        btn.className = "prompt-option-btn";
+        btn.textContent = opt;
+        btn.addEventListener("click", () => {
+          vscode.postMessage({ type: "prompt_response", id: data.id, answer: opt });
+          block.remove();
+        });
+        actions.appendChild(btn);
+      });
+    }
+
+    // Always add a text input for free-form answers
+    const inputRow = document.createElement("div");
+    inputRow.className = "prompt-input-row";
+    const promptInput = document.createElement("input");
+    promptInput.type = "text";
+    promptInput.className = "prompt-input";
+    promptInput.placeholder = "Type your answer...";
+    const sendBtn = document.createElement("button");
+    sendBtn.className = "prompt-send-btn";
+    sendBtn.textContent = "→";
+    sendBtn.addEventListener("click", () => {
+      const answer = promptInput.value.trim();
+      if (answer) {
+        vscode.postMessage({ type: "prompt_response", id: data.id, answer });
+        block.remove();
+      }
+    });
+    promptInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        sendBtn.click();
+      }
+    });
+    inputRow.appendChild(promptInput);
+    inputRow.appendChild(sendBtn);
+
+    block.appendChild(actions);
+    block.appendChild(inputRow);
+    messagesEl.appendChild(block);
+    scrollToBottom();
+    promptInput.focus();
+  }
 
   function renderConfirmation(data) {
     const block = document.createElement("div");
