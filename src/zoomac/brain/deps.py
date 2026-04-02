@@ -13,6 +13,7 @@ class ZoomacDeps:
     """Dependencies injected into every conversation turn."""
 
     memgate: MemoryManager
+    project_dir: str | None = None
     autonomy: AutonomyManager | None = None
     sandbox: object | None = None
     gateway: object | None = None

@@ -109,4 +109,4 @@ def test_evolution_signal_defaults():
 def test_system_prompt_exists():
     assert "Zoomac" in SYSTEM_PROMPT
     assert "search_memory" in SYSTEM_PROMPT
-    assert "worth_remembering" in SYSTEM_PROMPT
+    assert "<memory>" in SYSTEM_PROMPT
