@@ -1015,9 +1015,11 @@ export class LocalAgentBackend implements Backend {
     // Thinking budget: full on first call, 0 on tool-loop iterations
     const thinkingBudget = enableThinking ? (this._thinkingBudget || 4096) : 0;
 
-    // Try streaming first, fall back to non-streaming
+    // Only use streaming for Anthropic — Gemini/OpenAI streaming has compatibility issues
+    const isAnthropic = this._model.includes("claude");
+
     const call = () => {
-      if (provider.createMessageStreamWithModel) {
+      if (isAnthropic && provider.createMessageStreamWithModel) {
         return provider.createMessageStreamWithModel(
           this._model, systemPrompt, this._messages, TOOL_DEFINITIONS, this._maxTokens, onEvent, thinkingBudget
         );
