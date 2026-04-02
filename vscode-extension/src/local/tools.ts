@@ -74,7 +74,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     name: "bash",
     description:
       "Execute a shell command in the workspace directory. " +
-      "Returns stdout and stderr. Use for running tests, git commands, builds, etc.",
+      "Use for: git, npm, pip, tests, builds, ssh, python3 -c '...', " +
+      "node -e '...', curl, and any other CLI tool. " +
+      "For inline Python scripts, use: python3 -c 'code' or python3 <<'EOF'\\ncode\\nEOF",
     input_schema: {
       type: "object",
       properties: {
@@ -208,28 +210,6 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
       },
       required: ["entity"],
-    },
-  },
-  // ── Python execution tool ──
-  {
-    name: "python_exec",
-    description:
-      "Execute inline Python code and return stdout/stderr. " +
-      "Use for quick calculations, data exploration, testing snippets, " +
-      "or running scripts without creating a file.",
-    input_schema: {
-      type: "object",
-      properties: {
-        code: {
-          type: "string",
-          description: "Python code to execute",
-        },
-        timeout: {
-          type: "number",
-          description: "Timeout in milliseconds (default: 30000)",
-        },
-      },
-      required: ["code"],
     },
   },
   // ── Ask user tool ──

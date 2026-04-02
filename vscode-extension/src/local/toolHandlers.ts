@@ -23,7 +23,6 @@ export function createToolHandlers(
     bash: runBash(workspaceRoot),
     glob: globFiles(workspaceRoot),
     grep: grepFiles(workspaceRoot),
-    python_exec: pythonExec(workspaceRoot),
   };
 
   if (memoryBridge) {
@@ -264,53 +263,6 @@ function grepFiles(workspaceRoot: string): ToolHandler {
         }
       );
     });
-  };
-}
-
-// ── Python execution ──
-
-function pythonExec(workspaceRoot: string): ToolHandler {
-  return async (input) => {
-    const code = input.code as string;
-    const timeout = (input.timeout as number) || 30000;
-    const tmpFile = path.join(workspaceRoot, `_zoomac_exec_${Date.now()}.py`);
-
-    try {
-      fs.writeFileSync(tmpFile, code, "utf-8");
-
-      return new Promise<string>((resolve) => {
-        exec(
-          `python "${tmpFile}"`,
-          {
-            cwd: workspaceRoot,
-            timeout,
-            maxBuffer: 1024 * 1024,
-            shell: _gitBash,
-          },
-          (error, stdout, stderr) => {
-            // Clean up temp file
-            try { fs.unlinkSync(tmpFile); } catch {}
-
-            let output = "";
-            if (stdout) output += stdout;
-            if (stderr) output += output ? `\nSTDERR:\n${stderr}` : stderr;
-            if (error && error.killed) {
-              output += `\n[TIMED OUT after ${timeout}ms]`;
-            } else if (error && !stdout && !stderr) {
-              output = `Error: ${error.message}`;
-            }
-            if (!output) output = "(No output)";
-            if (output.length > 10000) {
-              output = output.substring(0, 10000) + "\n... [truncated]";
-            }
-            resolve(output);
-          }
-        );
-      });
-    } catch (err: unknown) {
-      try { fs.unlinkSync(tmpFile); } catch {}
-      return `Error: ${err instanceof Error ? err.message : String(err)}`;
-    }
   };
 }
 

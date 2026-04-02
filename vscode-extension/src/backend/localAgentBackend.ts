@@ -1063,11 +1063,6 @@ export class LocalAgentBackend implements Backend {
         data.content = result;
         data.description = input.pattern as string;
         break;
-      case "python_exec":
-        data.command = (input.code as string)?.substring(0, 200);
-        data.output = result;
-        data.description = "Python script";
-        break;
       default:
         data.content = result;
         break;

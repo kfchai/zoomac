@@ -165,48 +165,6 @@ async def grep_files(deps: ZoomacDeps, pattern: str, path: str = "", glob: str =
         return f"Grep error: {e}"
 
 
-async def python_exec(deps: ZoomacDeps, code: str, timeout: int = 30000) -> str:
-    """Execute inline Python code and return stdout/stderr."""
-    import tempfile
-
-    project_dir = getattr(deps, "project_dir", None) or os.getcwd()
-    timeout_sec = timeout / 1000
-
-    # Write code to a temp file and execute
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".py", dir=project_dir,
-            prefix="_zoomac_exec_", delete=False, encoding="utf-8",
-        ) as f:
-            f.write(code)
-            tmp_path = f.name
-
-        try:
-            result = subprocess.run(
-                ["python", tmp_path],
-                cwd=project_dir,
-                capture_output=True,
-                text=True,
-                timeout=timeout_sec,
-            )
-            output = result.stdout
-            if result.stderr:
-                output += f"\nSTDERR:\n{result.stderr}" if output else result.stderr
-            if result.returncode != 0 and not output:
-                output = f"Exit code: {result.returncode}"
-            if not output:
-                output = "(No output)"
-            if len(output) > 10000:
-                output = output[:10000] + f"\n... [truncated, {len(output)} total chars]"
-            return output
-        finally:
-            os.unlink(tmp_path)
-    except subprocess.TimeoutExpired:
-        return f"[TIMED OUT after {timeout_sec}s]"
-    except Exception as e:
-        return f"Error: {e}"
-
-
 async def ask_user(deps: ZoomacDeps, question: str, options: str = "") -> str:
     """Ask the user a question and wait for their response (CLI mode: stdin)."""
     print(f"\n🔵 Agent asks: {question}")
@@ -251,7 +209,11 @@ def build_coding_tool_registry() -> ToolRegistry:
         ToolDefinition(
             spec=ToolSpec(
                 name="bash",
-                description="Execute a shell command in the workspace directory.",
+                description=(
+                    "Execute a shell command in the workspace directory. "
+                    "Use for: git, npm, pip, tests, builds, ssh, python3 -c '...', "
+                    "node -e '...', curl, and any other CLI tool."
+                ),
                 capabilities=ToolCapabilities(requires_network=True),
                 approval_action_type=ActionType.RUN_COMMAND.value,
             ),
@@ -272,20 +234,6 @@ def build_coding_tool_registry() -> ToolRegistry:
                 capabilities=ToolCapabilities(read_only=True, supports_parallel=True),
             ),
             handler=grep_files,
-        ),
-        ToolDefinition(
-            spec=ToolSpec(
-                name="python_exec",
-                description=(
-                    "Execute inline Python code and return stdout/stderr. "
-                    "Use for quick calculations, data exploration, testing snippets, "
-                    "or running scripts without creating a file. "
-                    "The code runs in the workspace directory with full access to installed packages."
-                ),
-                capabilities=ToolCapabilities(requires_network=True),
-                approval_action_type=ActionType.RUN_COMMAND.value,
-            ),
-            handler=python_exec,
         ),
         ToolDefinition(
             spec=ToolSpec(
