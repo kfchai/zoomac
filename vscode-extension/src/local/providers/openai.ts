@@ -313,90 +313,87 @@ export class OpenAIProvider implements LLMProvider {
     return response;
   }
 
-  /** Convert messages, splitting multi-tool-result blocks and cleaning invalid entries. */
+  /**
+   * Convert messages for Gemini/OpenAI compatibility.
+   * Fixes: empty content, tool_result splitting, null content on assistant messages.
+   */
   private _convertMessages(messages: ConversationMessage[]): OpenAI.ChatCompletionMessageParam[] {
     const result: OpenAI.ChatCompletionMessageParam[] = [];
+
+    // Build a map of tool_use_id → tool name for Gemini compatibility
+    const toolNameMap = new Map<string, string>();
     for (const msg of messages) {
-      if (!msg || !msg.content) continue;
-
-      // Skip empty content arrays
-      if (Array.isArray(msg.content) && msg.content.length === 0) continue;
-
       if (typeof msg.content !== "string" && Array.isArray(msg.content)) {
-        const toolResults = msg.content.filter((b) => b.type === "tool_result");
-        if (toolResults.length > 0) {
-          // Split each tool_result into a separate "tool" role message
-          for (const tr of toolResults) {
-            if (tr.tool_use_id) {
-              result.push({
-                role: "tool" as const,
-                tool_call_id: tr.tool_use_id,
-                content: tr.content || "(no output)",
-              });
-            }
+        for (const b of msg.content) {
+          if (b.type === "tool_use" && b.id && b.name) {
+            toolNameMap.set(b.id, b.name);
           }
-          continue;
         }
       }
-
-      const converted = this._toOpenAIMessage(msg);
-      // Skip messages with empty/null content
-      if (converted.role === "assistant" && !converted.content && !(converted as any).tool_calls?.length) continue;
-      if (converted.role === "user" && !converted.content) continue;
-
-      result.push(converted);
-    }
-    return result;
-  }
-
-  private _toOpenAIMessage(
-    msg: ConversationMessage
-  ): OpenAI.ChatCompletionMessageParam {
-    if (typeof msg.content === "string") {
-      return { role: msg.role, content: msg.content };
     }
 
-    // Handle structured content blocks
-    // Check if any blocks are tool_result — OpenAI uses a separate `tool` role for those
-    const toolResults = msg.content.filter((b) => b.type === "tool_result");
-    if (toolResults.length > 0) {
-      // OpenAI expects individual tool messages
-      // Return the first one; the caller should split into multiple messages
-      const tr = toolResults[0];
-      return {
-        role: "tool" as const,
-        tool_call_id: tr.tool_use_id!,
-        content: tr.content || "",
-      };
-    }
+    for (const msg of messages) {
+      if (!msg) continue;
 
-    // Assistant message with tool_use blocks
-    const toolCalls = msg.content.filter((b) => b.type === "tool_use");
-    if (toolCalls.length > 0) {
-      const textParts = msg.content
-        .filter((b) => b.type === "text")
+      // Skip empty
+      if (!msg.content) continue;
+      if (Array.isArray(msg.content) && msg.content.length === 0) continue;
+
+      if (typeof msg.content === "string") {
+        if (!msg.content && msg.role === "user") continue;
+        result.push({ role: msg.role, content: msg.content || "" });
+        continue;
+      }
+
+      // Handle tool_result blocks — split into individual "tool" messages
+      const toolResults = msg.content.filter((b) => b.type === "tool_result");
+      if (toolResults.length > 0) {
+        for (const tr of toolResults) {
+          if (tr.tool_use_id) {
+            result.push({
+              role: "tool" as const,
+              tool_call_id: tr.tool_use_id,
+              content: tr.content || "(no output)",
+            });
+          }
+        }
+        continue;
+      }
+
+      // Handle assistant messages with tool_use blocks
+      const toolCalls = msg.content.filter((b) => b.type === "tool_use");
+      if (toolCalls.length > 0) {
+        const textParts = msg.content
+          .filter((b) => b.type === "text" && b.text)
+          .map((b) => b.text)
+          .join("");
+
+        result.push({
+          role: "assistant",
+          // CRITICAL: Gemini rejects null content — use empty string
+          content: textParts || "",
+          tool_calls: toolCalls.map((tc) => ({
+            id: tc.id || "call_" + Math.random().toString(36).substring(2, 8),
+            type: "function" as const,
+            function: {
+              name: tc.name || "unknown",
+              arguments: JSON.stringify(tc.input || {}),
+            },
+          })),
+        });
+        continue;
+      }
+
+      // Plain text
+      const text = msg.content
+        .filter((b) => b.type === "text" && b.text)
         .map((b) => b.text)
         .join("");
-
-      return {
-        role: "assistant",
-        content: textParts || null,
-        tool_calls: toolCalls.map((tc) => ({
-          id: tc.id!,
-          type: "function" as const,
-          function: {
-            name: tc.name!,
-            arguments: JSON.stringify(tc.input || {}),
-          },
-        })),
-      };
+      if (text) {
+        result.push({ role: msg.role, content: text });
+      }
     }
 
-    // Plain text
-    const text = msg.content
-      .filter((b) => b.type === "text")
-      .map((b) => b.text)
-      .join("");
-    return { role: msg.role, content: text };
+    return result;
   }
 }
