@@ -236,7 +236,22 @@ export class OpenAIProvider implements LLMProvider {
       }));
     }
 
-    const stream = await this._client.chat.completions.create(params);
+    let stream;
+    try {
+      stream = await this._client.chat.completions.create(params);
+    } catch (err: unknown) {
+      const e = err as any;
+      // Extract error details from multiple possible locations
+      const detail = e?.error?.message
+        || e?.message
+        || e?.body?.error?.message
+        || (typeof e?.body === "string" ? e.body : "")
+        || (e?.body ? JSON.stringify(e.body) : "")
+        || (e?.response?.data ? JSON.stringify(e.response.data) : "")
+        || `${e?.status || ""} ${e?.statusText || ""}`.trim()
+        || String(err);
+      throw new Error(`API error (${e?.status || "?"}): ${detail}`);
+    }
 
     // Accumulate content
     let textContent = "";
