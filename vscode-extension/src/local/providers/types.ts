@@ -97,7 +97,7 @@ export function createProvider(config: ProviderConfig): LLMProvider {
       const { OpenAIProvider } = require("./openai");
       return new OpenAIProvider(
         config.apiKey,
-        config.baseUrl || "https://dashscope-sg.aliyuncs.com/compatible-mode/v1"
+        config.baseUrl || "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
       );
     }
     case "ollama": {
