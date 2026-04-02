@@ -36,6 +36,13 @@ export class LocalAgentBackend implements Backend {
   private _abortController?: AbortController;
   autoEdit = true;
 
+  /** Cumulative token usage for the session */
+  private _totalInputTokens = 0;
+  private _totalOutputTokens = 0;
+  private _totalCacheReadTokens = 0;
+  private _totalCacheWriteTokens = 0;
+  private _apiCalls = 0;
+
   /** Pending confirmation resolvers keyed by confirmation ID */
   private _pendingConfirmations = new Map<string, (allowed: boolean) => void>();
   private _confirmCounter = 0;
@@ -338,10 +345,38 @@ export class LocalAgentBackend implements Backend {
         return true;
       }
 
+      case "/review": {
+        this._emitter.fire({ type: "user", content });
+        this._emitter.fire({ type: "spinner", text: "Reviewer analyzing...", active: true } as WebviewMessage);
+
+        try {
+          const review = await this._runReviewer(args);
+
+          // Show the review in the chat with a distinct style
+          this._emitter.fire({ type: "spinner", text: "", active: false } as WebviewMessage);
+          this._emitter.fire({
+            type: "agent",
+            content: "### 🔍 Reviewer Agent\n\n" + review,
+          });
+
+          // Inject the review into the main conversation so the agent sees it
+          this._messages.push({
+            role: "user",
+            content: `[REVIEWER FEEDBACK — a second agent reviewed your recent response and actions. Consider this feedback carefully and adjust your approach if needed.]\n\n${review}`,
+          });
+
+        } catch (err: unknown) {
+          this._emitter.fire({ type: "spinner", text: "", active: false } as WebviewMessage);
+          this._emitter.fire({ type: "error", content: `Review failed: ${err}` });
+        }
+        return true;
+      }
+
       case "/help": {
         this._emitter.fire({ type: "agent", content:
           "### Commands\n" +
           "- `/commit [note]` — Auto-commit with generated message\n" +
+          "- `/review [focus]` — Get a 2nd opinion from a reviewer agent\n" +
           "- `/clear` — Clear conversation\n" +
           "- `/compact` — Force context compaction\n" +
           "- `/model [name]` — Show/switch model\n" +
@@ -353,6 +388,66 @@ export class LocalAgentBackend implements Backend {
       default:
         return false;
     }
+  }
+
+  /** Run a reviewer agent that critiques the main agent's recent work. */
+  private async _runReviewer(focus: string): Promise<string> {
+    const reviewerSystemPrompt =
+      "You are a senior code reviewer and technical critic. " +
+      "Your job is to review the conversation and the main agent's recent proposals, replies, and actions. " +
+      "Be constructive but honest. Point out:\n" +
+      "- Bugs, logic errors, or edge cases the agent missed\n" +
+      "- Security concerns or bad practices\n" +
+      "- Better approaches or alternatives\n" +
+      "- Missing error handling or test coverage\n" +
+      "- Unnecessary complexity or over-engineering\n" +
+      "- Things the agent did well (acknowledge good work)\n\n" +
+      "Be concise — 3-5 bullet points max. No fluff. If everything looks good, say so briefly.\n" +
+      "You are NOT the main agent — do not execute any actions or propose code. Only review.";
+
+    // Build conversation summary for the reviewer
+    // Include the last N messages for context
+    const recentMessages = this._messages.slice(-20);
+
+    // Flatten to a readable summary
+    const conversationSummary = recentMessages.map((msg) => {
+      if (typeof msg.content === "string") {
+        return `[${msg.role}]: ${msg.content.substring(0, 1000)}`;
+      }
+      const blocks = msg.content as ContentBlock[];
+      const parts: string[] = [];
+      for (const b of blocks) {
+        if (b.type === "text" && b.text) {
+          parts.push(b.text.substring(0, 500));
+        } else if (b.type === "tool_use") {
+          parts.push(`[tool: ${b.name}(${JSON.stringify(b.input || {}).substring(0, 200)})]`);
+        } else if (b.type === "tool_result") {
+          parts.push(`[result: ${(b.content || "").substring(0, 200)}]`);
+        }
+      }
+      return `[${msg.role}]: ${parts.join(" ")}`;
+    }).join("\n\n");
+
+    const reviewPrompt = focus
+      ? `Review the agent's recent work with focus on: ${focus}\n\nConversation:\n${conversationSummary}`
+      : `Review the agent's recent proposals, code changes, and actions:\n\nConversation:\n${conversationSummary}`;
+
+    // Call the LLM with the reviewer prompt (separate context, no tools)
+    const provider = this._provider as any;
+    const response: LLMResponse = provider.createMessageWithModel
+      ? await provider.createMessageWithModel(this._model, reviewerSystemPrompt, [
+          { role: "user", content: reviewPrompt },
+        ], [], 2048)
+      : await provider.createMessage(reviewerSystemPrompt, [
+          { role: "user", content: reviewPrompt },
+        ], [], 2048);
+
+    const text = response.content
+      .filter((b) => b.type === "text" && b.text)
+      .map((b) => b.text!)
+      .join("\n");
+
+    return text || "No review feedback generated.";
   }
 
   private _confirmDescription(tool: string, input: Record<string, unknown>): string {
@@ -501,8 +596,13 @@ export class LocalAgentBackend implements Backend {
           }
         }
 
-        // Append assistant response to history
-        this._messages.push({ role: "assistant", content: response.content });
+        // Append assistant response to history (filter empty text blocks)
+        const cleanContent = response.content.filter(
+          (b) => !(b.type === "text" && (!b.text || b.text.trim() === ""))
+        );
+        if (cleanContent.length > 0) {
+          this._messages.push({ role: "assistant", content: cleanContent });
+        }
 
         // Extract and ingest inline <memory> blocks from the response
         this._extractAndIngestMemory(response.content);
@@ -512,21 +612,21 @@ export class LocalAgentBackend implements Backend {
 
         // Show token usage + context pie
         this._emitContextUsage();
-        if (response.usage) {
-          this._emitter.fire({
-            type: "status",
-            content: `Local (${this._model}) · ${response.usage.inputTokens + response.usage.outputTokens} tokens`,
-          });
-        }
+        this._trackAndEmitUsage(response);
 
         return;
       }
 
-      // Append assistant response to history (with tool_use blocks)
-      this._messages.push({
-        role: "assistant",
-        content: response.content,
-      });
+      // Append assistant response to history (filter empty text blocks)
+      const cleanToolContent = response.content.filter(
+        (b) => !(b.type === "text" && (!b.text || b.text.trim() === ""))
+      );
+      if (cleanToolContent.length > 0) {
+        this._messages.push({
+          role: "assistant",
+          content: cleanToolContent,
+        });
+      }
 
       // Execute tool calls — parallel for safe tools, sequential for destructive
       const toolResults: ContentBlock[] = [];
@@ -1081,6 +1181,71 @@ export class LocalAgentBackend implements Backend {
         }
       }
     }
+  }
+
+  /** Track cumulative token usage and emit to webview. */
+  private _trackAndEmitUsage(response: LLMResponse): void {
+    if (!response.usage) return;
+
+    const u = response.usage;
+    this._apiCalls++;
+    this._totalInputTokens += u.inputTokens;
+    this._totalOutputTokens += u.outputTokens;
+    this._totalCacheReadTokens += u.cacheReadTokens || 0;
+    this._totalCacheWriteTokens += u.cacheWriteTokens || 0;
+
+    // Estimate cost (per million tokens)
+    const cost = this._estimateCost(u.inputTokens, u.outputTokens, u.cacheReadTokens || 0, u.cacheWriteTokens || 0);
+    const totalCost = this._estimateCost(this._totalInputTokens, this._totalOutputTokens, this._totalCacheReadTokens, this._totalCacheWriteTokens);
+
+    this._emitter.fire({
+      type: "token_usage",
+      input: u.inputTokens,
+      output: u.outputTokens,
+      cacheRead: u.cacheReadTokens || 0,
+      cacheWrite: u.cacheWriteTokens || 0,
+      totalInput: this._totalInputTokens,
+      totalOutput: this._totalOutputTokens,
+      totalCacheRead: this._totalCacheReadTokens,
+      totalCacheWrite: this._totalCacheWriteTokens,
+      cost,
+      totalCost,
+      apiCalls: this._apiCalls,
+    } as unknown as WebviewMessage);
+
+    // Update status bar
+    this._emitter.fire({
+      type: "status",
+      content: `Local (${this._model}) · $${totalCost.toFixed(4)}`,
+    });
+  }
+
+  /** Estimate cost in USD based on model pricing. */
+  private _estimateCost(input: number, output: number, cacheRead: number, cacheWrite: number): number {
+    const m = this._model.toLowerCase();
+    let inputPrice = 3; // $ per 1M tokens (default)
+    let outputPrice = 15;
+    let cacheReadPrice = 0.3;
+    let cacheWritePrice = 3.75;
+
+    if (m.includes("opus")) {
+      inputPrice = 15; outputPrice = 75; cacheReadPrice = 1.5; cacheWritePrice = 18.75;
+    } else if (m.includes("sonnet")) {
+      inputPrice = 3; outputPrice = 15; cacheReadPrice = 0.3; cacheWritePrice = 3.75;
+    } else if (m.includes("haiku")) {
+      inputPrice = 0.25; outputPrice = 1.25; cacheReadPrice = 0.025; cacheWritePrice = 0.3;
+    } else if (m.includes("gpt-4o")) {
+      inputPrice = 2.5; outputPrice = 10; cacheReadPrice = 1.25; cacheWritePrice = 2.5;
+    } else if (m.includes("gpt-4")) {
+      inputPrice = 30; outputPrice = 60; cacheReadPrice = 15; cacheWritePrice = 30;
+    }
+
+    return (
+      (input * inputPrice +
+       output * outputPrice +
+       cacheRead * cacheReadPrice +
+       cacheWrite * cacheWritePrice) / 1_000_000
+    );
   }
 
   private _emitContextUsage(): void {

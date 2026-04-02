@@ -34,7 +34,12 @@ export interface ToolDefinition {
 export interface LLMResponse {
   content: ContentBlock[];
   stopReason: "end_turn" | "tool_use";
-  usage?: { inputTokens: number; outputTokens: number };
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens?: number;
+    cacheWriteTokens?: number;
+  };
 }
 
 /** Events emitted during streaming */

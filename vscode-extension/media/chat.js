@@ -126,6 +126,9 @@
       case "context_usage":
         updateContextPie(data.used, data.max, data.percent);
         break;
+      case "token_usage":
+        updateTokenUsage(data);
+        break;
       case "restore_session":
         // Restore — migrate text_deltas into agent messages
         chatHistory = migrateHistory(data.messages || []);
@@ -1307,6 +1310,50 @@
   }
 
   // ===== Context usage pie chart =====
+
+  // ===== Token usage display (CC-style) =====
+
+  function updateTokenUsage(data) {
+    // Update or create the usage bar at the bottom of messages
+    let usageEl = document.getElementById("token-usage-bar");
+    if (!usageEl) {
+      usageEl = document.createElement("div");
+      usageEl.id = "token-usage-bar";
+      usageEl.className = "token-usage-bar";
+      messagesEl.appendChild(usageEl);
+    } else {
+      // Move to the end
+      messagesEl.appendChild(usageEl);
+    }
+
+    const inputK = (data.input / 1000).toFixed(1);
+    const outputK = (data.output / 1000).toFixed(1);
+    const totalInK = (data.totalInput / 1000).toFixed(1);
+    const totalOutK = (data.totalOutput / 1000).toFixed(1);
+
+    let cacheInfo = "";
+    if (data.cacheRead > 0 || data.cacheWrite > 0) {
+      const cacheReadK = (data.cacheRead / 1000).toFixed(1);
+      const cacheWriteK = (data.cacheWrite / 1000).toFixed(1);
+      cacheInfo = ` · cache: ${cacheReadK}K read, ${cacheWriteK}K write`;
+    }
+
+    let totalCacheInfo = "";
+    if (data.totalCacheRead > 0) {
+      const savings = ((data.totalCacheRead / (data.totalInput + data.totalCacheRead)) * 100).toFixed(0);
+      totalCacheInfo = ` · ${savings}% cached`;
+    }
+
+    const costStr = data.cost > 0 ? ` · $${data.cost.toFixed(4)}` : "";
+    const totalCostStr = data.totalCost > 0 ? `$${data.totalCost.toFixed(4)}` : "";
+
+    usageEl.innerHTML =
+      `<span class="token-usage-this">↑${inputK}K ↓${outputK}K${cacheInfo}${costStr}</span>` +
+      `<span class="token-usage-sep">│</span>` +
+      `<span class="token-usage-total">Session: ↑${totalInK}K ↓${totalOutK}K${totalCacheInfo} · ${totalCostStr} · ${data.apiCalls} calls</span>`;
+
+    scrollToBottom();
+  }
 
   function updateContextPie(used, max, percent) {
     let pie = document.getElementById("context-pie");

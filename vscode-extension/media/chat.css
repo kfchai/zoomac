@@ -933,6 +933,43 @@ body.drag-over::after {
 .thinking-body a:hover { text-decoration: underline; }
 .thinking-block.collapsed .thinking-body { display: none; }
 
+/* ===== Token Usage Bar ===== */
+.token-usage-bar {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 4px 16px 4px 32px;
+  font-size: 11px;
+  font-family: var(--z-font-mono);
+  color: var(--z-fg-muted);
+  opacity: 0.7;
+  position: relative;
+}
+
+.token-usage-bar::before {
+  content: "";
+  position: absolute;
+  left: 18px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--z-tree-line);
+}
+
+.token-usage-this {
+  color: var(--z-fg-muted);
+}
+
+.token-usage-sep {
+  margin: 0 6px;
+  color: rgba(255,255,255,0.1);
+}
+
+.token-usage-total {
+  color: var(--z-fg-muted);
+  opacity: 0.8;
+}
+
 /* ===== Separator ===== */
 .msg-separator {
   height: 1px;

@@ -106,5 +106,6 @@ export type WebviewMessage =
   | { type: "confirm_tool"; id: string; tool: string; description: string; input: Record<string, unknown> }
   | { type: "text_delta"; text: string }
   | { type: "context_usage"; used: number; max: number; percent: number }
+  | { type: "token_usage"; input: number; output: number; cacheRead: number; cacheWrite: number; totalInput: number; totalOutput: number; totalCacheRead: number; totalCacheWrite: number; cost: number; totalCost: number; apiCalls: number }
   | { type: "status"; content: string }
   | { type: "error"; content: string };

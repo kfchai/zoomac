@@ -142,27 +142,34 @@ export class AnthropicProvider implements LLMProvider {
     const finalMessage = await stream.finalMessage();
 
     // Build the final response from the accumulated message
-    const finalContent = finalMessage.content.map((block): ContentBlock => {
-      if (block.type === "text") {
-        return { type: "text", text: block.text };
-      }
-      if (block.type === "tool_use") {
-        return {
-          type: "tool_use",
-          id: block.id,
-          name: block.name,
-          input: block.input as Record<string, unknown>,
-        };
-      }
-      return { type: "text", text: "" };
-    });
+    // Skip thinking blocks and unknown types — only keep text and tool_use
+    const finalContent = finalMessage.content
+      .filter((block) => block.type === "text" || block.type === "tool_use")
+      .map((block): ContentBlock => {
+        if (block.type === "text") {
+          return { type: "text", text: block.text };
+        }
+        if (block.type === "tool_use") {
+          return {
+            type: "tool_use",
+            id: block.id,
+            name: block.name,
+            input: block.input as Record<string, unknown>,
+          };
+        }
+        return { type: "text", text: "" };
+      })
+      .filter((b) => !(b.type === "text" && !b.text));
 
+    const usageAny = finalMessage.usage as unknown as Record<string, number>;
     const response: LLMResponse = {
       content: finalContent,
       stopReason: finalMessage.stop_reason === "tool_use" ? "tool_use" : "end_turn",
       usage: {
-        inputTokens: finalMessage.usage.input_tokens,
-        outputTokens: finalMessage.usage.output_tokens,
+        inputTokens: usageAny.input_tokens || 0,
+        outputTokens: usageAny.output_tokens || 0,
+        cacheReadTokens: usageAny.cache_read_input_tokens || 0,
+        cacheWriteTokens: usageAny.cache_creation_input_tokens || 0,
       },
     };
 
@@ -208,24 +215,29 @@ export class AnthropicProvider implements LLMProvider {
     const response = await this._client.messages.create(params);
 
     return {
-      content: response.content.map((block): ContentBlock => {
-        if (block.type === "text") {
-          return { type: "text", text: block.text };
-        }
-        if (block.type === "tool_use") {
-          return {
-            type: "tool_use",
-            id: block.id,
-            name: block.name,
-            input: block.input as Record<string, unknown>,
-          };
-        }
-        return { type: "text", text: "" };
-      }),
+      content: response.content
+        .filter((block) => block.type === "text" || block.type === "tool_use")
+        .map((block): ContentBlock => {
+          if (block.type === "text") {
+            return { type: "text", text: block.text };
+          }
+          if (block.type === "tool_use") {
+            return {
+              type: "tool_use",
+              id: block.id,
+              name: block.name,
+              input: block.input as Record<string, unknown>,
+            };
+          }
+          return { type: "text", text: "" };
+        })
+        .filter((b) => !(b.type === "text" && !b.text)),
       stopReason: response.stop_reason === "tool_use" ? "tool_use" : "end_turn",
       usage: {
-        inputTokens: response.usage.input_tokens,
-        outputTokens: response.usage.output_tokens,
+        inputTokens: (response.usage as any).input_tokens || 0,
+        outputTokens: (response.usage as any).output_tokens || 0,
+        cacheReadTokens: (response.usage as any).cache_read_input_tokens || 0,
+        cacheWriteTokens: (response.usage as any).cache_creation_input_tokens || 0,
       },
     };
   }
