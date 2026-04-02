@@ -1294,7 +1294,7 @@ export class LocalAgentBackend implements Backend {
   /** Estimate cost in USD based on model pricing. */
   private _estimateCost(input: number, output: number, cacheRead: number, cacheWrite: number): number {
     const m = this._model.toLowerCase();
-    let inputPrice = 3; // $ per 1M tokens (default)
+    let inputPrice = 3; // $ per 1M tokens
     let outputPrice = 15;
     let cacheReadPrice = 0.3;
     let cacheWritePrice = 3.75;
@@ -1311,11 +1311,14 @@ export class LocalAgentBackend implements Backend {
       inputPrice = 30; outputPrice = 60; cacheReadPrice = 15; cacheWritePrice = 30;
     }
 
+    // input_tokens includes cache_read — subtract to avoid double-counting
+    const nonCachedInput = Math.max(0, input - cacheRead);
+
     return (
-      (input * inputPrice +
-       output * outputPrice +
+      (nonCachedInput * inputPrice +
        cacheRead * cacheReadPrice +
-       cacheWrite * cacheWritePrice) / 1_000_000
+       cacheWrite * cacheWritePrice +
+       output * outputPrice) / 1_000_000
     );
   }
 

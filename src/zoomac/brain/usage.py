@@ -97,9 +97,11 @@ class UsageTracker:
                 prices = _PRICING[key]
                 break
 
+        # input_t includes cache_read — subtract to avoid double-counting
+        non_cached = max(0, input_t - cache_read)
         return (
-            input_t * prices["input"]
-            + output_t * prices["output"]
+            non_cached * prices["input"]
             + cache_read * prices["cache_read"]
             + cache_write * prices["cache_write"]
+            + output_t * prices["output"]
         ) / 1_000_000
