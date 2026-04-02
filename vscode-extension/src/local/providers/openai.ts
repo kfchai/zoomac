@@ -37,7 +37,7 @@ export class OpenAIProvider implements LLMProvider {
   ): Promise<LLMResponse> {
     const openaiMessages: OpenAI.ChatCompletionMessageParam[] = [
       { role: "system", content: system },
-      ...messages.map((m) => this._toOpenAIMessage(m)),
+      ...this._convertMessages(messages),
     ];
 
     const params: OpenAI.ChatCompletionCreateParams = {
@@ -125,7 +125,7 @@ export class OpenAIProvider implements LLMProvider {
   ): Promise<LLMResponse> {
     const openaiMessages: OpenAI.ChatCompletionMessageParam[] = [
       { role: "system", content: system },
-      ...messages.map((m) => this._toOpenAIMessage(m)),
+      ...this._convertMessages(messages),
     ];
 
     const params: OpenAI.ChatCompletionCreateParams = {
@@ -201,7 +201,7 @@ export class OpenAIProvider implements LLMProvider {
   ): Promise<LLMResponse> {
     const openaiMessages: OpenAI.ChatCompletionMessageParam[] = [
       { role: "system", content: system },
-      ...messages.map((m) => this._toOpenAIMessage(m)),
+      ...this._convertMessages(messages),
     ];
 
     const params: OpenAI.ChatCompletionCreateParams = {
@@ -282,6 +282,30 @@ export class OpenAIProvider implements LLMProvider {
 
     onEvent({ type: "done", response });
     return response;
+  }
+
+  /** Convert messages, splitting multi-tool-result blocks into individual messages. */
+  private _convertMessages(messages: ConversationMessage[]): OpenAI.ChatCompletionMessageParam[] {
+    const result: OpenAI.ChatCompletionMessageParam[] = [];
+    for (const msg of messages) {
+      if (typeof msg.content !== "string" && Array.isArray(msg.content)) {
+        const toolResults = msg.content.filter((b) => b.type === "tool_result");
+        if (toolResults.length > 1) {
+          // Split: first emit the assistant tool_use message (should already be in history)
+          // Then emit each tool_result as a separate "tool" message
+          for (const tr of toolResults) {
+            result.push({
+              role: "tool" as const,
+              tool_call_id: tr.tool_use_id || "unknown",
+              content: tr.content || "",
+            });
+          }
+          continue;
+        }
+      }
+      result.push(this._toOpenAIMessage(msg));
+    }
+    return result;
   }
 
   private _toOpenAIMessage(
