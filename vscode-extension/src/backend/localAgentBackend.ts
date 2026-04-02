@@ -1324,6 +1324,12 @@ export class LocalAgentBackend implements Backend {
       inputPrice = 2.5; outputPrice = 10; cacheReadPrice = 1.25; cacheWritePrice = 2.5;
     } else if (m.includes("gpt-4")) {
       inputPrice = 30; outputPrice = 60; cacheReadPrice = 15; cacheWritePrice = 30;
+    } else if (m.includes("gemini-2.5-pro")) {
+      inputPrice = 1.25; outputPrice = 10; cacheReadPrice = 0.315; cacheWritePrice = 1.25;
+    } else if (m.includes("gemini-2.5-flash")) {
+      inputPrice = 0.15; outputPrice = 0.60; cacheReadPrice = 0.0375; cacheWritePrice = 0.15;
+    } else if (m.includes("gemini-2.0-flash")) {
+      inputPrice = 0.10; outputPrice = 0.40; cacheReadPrice = 0.025; cacheWritePrice = 0.10;
     }
 
     // input_tokens includes cache_read — subtract to avoid double-counting

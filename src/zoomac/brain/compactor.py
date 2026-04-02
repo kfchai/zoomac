@@ -47,6 +47,8 @@ def get_max_context_tokens(model: str) -> int:
         return 200000
     if "claude" in m:
         return 100000
+    if "gemini-2.5" in m or "gemini-2.0" in m:
+        return 1000000
     if "gpt-4o" in m or "gpt-4-turbo" in m:
         return 128000
     if "gpt-4" in m:

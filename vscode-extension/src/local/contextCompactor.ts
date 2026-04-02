@@ -216,6 +216,9 @@ export function getMaxContextTokens(model: string): number {
   if (m.includes("claude")) {
     return 100000;
   }
+  if (m.includes("gemini-2.5") || m.includes("gemini-2.0")) {
+    return 1000000; // Gemini supports 1M context
+  }
   if (m.includes("gpt-4o")) {
     return 128000;
   }

@@ -85,6 +85,13 @@ export function createProvider(config: ProviderConfig): LLMProvider {
       const { OpenAIProvider } = require("./openai");
       return new OpenAIProvider(config.apiKey, config.baseUrl);
     }
+    case "gemini": {
+      const { OpenAIProvider } = require("./openai");
+      return new OpenAIProvider(
+        config.apiKey,
+        config.baseUrl || "https://generativelanguage.googleapis.com/v1beta/openai"
+      );
+    }
     case "ollama": {
       const { OpenAIProvider } = require("./openai");
       return new OpenAIProvider(
