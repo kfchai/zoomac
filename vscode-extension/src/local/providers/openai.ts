@@ -169,6 +169,13 @@ export class OpenAIProvider implements LLMProvider {
     } catch (err: unknown) {
       const e = err as any;
       const detail = e?.error?.message || e?.message || e?.body || String(err);
+
+      // If model doesn't support tools, switch to text-tool mode and retry
+      if (detail.includes("does not support tools") || detail.includes("tool_use is not supported")) {
+        this._textToolMode = true;
+        return this._createWithModel(model, system, messages, tools, maxTokens);
+      }
+
       const roles = converted.map((m: any) => `${m.role}${m.tool_call_id ? "(tool)" : ""}${m.tool_calls ? `(${m.tool_calls.length}calls)` : ""}`).join("→");
       throw new Error(`API error: ${detail} | msg flow: [sys]→${roles}`);
     }
