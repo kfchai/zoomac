@@ -109,8 +109,13 @@ export function createProvider(config: ProviderConfig): LLMProvider {
       );
     }
     case "ollama": {
-      const { OllamaProvider } = require("./ollama");
-      return new OllamaProvider(config.baseUrl || "http://localhost:11434");
+      // Use OpenAI-compatible endpoint with text-tool fallback
+      // (native /api/chat doesn't support tools for most models)
+      const { OpenAIProvider } = require("./openai");
+      return new OpenAIProvider(
+        "ollama",
+        (config.baseUrl || "http://localhost:11434") + "/v1"
+      );
     }
     default: {
       // Treat unknown providers as OpenAI-compatible
