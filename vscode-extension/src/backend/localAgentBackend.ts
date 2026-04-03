@@ -655,8 +655,17 @@ export class LocalAgentBackend implements Backend {
         return;
       }
 
-      // Clear spinner — streaming text will appear directly
-      this._emitter.fire({ type: "spinner", text: "", active: false } as WebviewMessage);
+      // Show spinner for non-streaming models, clear for streaming
+      const isStreaming = this._model.includes("claude");
+      if (isStreaming) {
+        this._emitter.fire({ type: "spinner", text: "", active: false } as WebviewMessage);
+      } else {
+        this._emitter.fire({
+          type: "spinner",
+          text: iteration === 0 ? "Thinking..." : "Processing tools...",
+          active: true,
+        } as WebviewMessage);
+      }
 
       // Start a live streaming text element in the webview
       let streamedText = "";
@@ -689,6 +698,11 @@ export class LocalAgentBackend implements Backend {
       } catch (err: unknown) {
         this._log(`[toolLoop] ERROR: ${err}`);
         throw err;
+      }
+
+      // Clear spinner for non-streaming models
+      if (!isStreaming) {
+        this._emitter.fire({ type: "spinner", text: "", active: false } as WebviewMessage);
       }
 
       // Finalize the streamed text (tell webview to close the live element)
