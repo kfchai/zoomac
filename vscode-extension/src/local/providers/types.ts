@@ -109,11 +109,8 @@ export function createProvider(config: ProviderConfig): LLMProvider {
       );
     }
     case "ollama": {
-      const { OpenAIProvider } = require("./openai");
-      return new OpenAIProvider(
-        undefined,
-        config.baseUrl || "http://localhost:11434/v1"
-      );
+      const { OllamaProvider } = require("./ollama");
+      return new OllamaProvider(config.baseUrl || "http://localhost:11434");
     }
     default: {
       // Treat unknown providers as OpenAI-compatible
