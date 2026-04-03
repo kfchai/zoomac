@@ -472,29 +472,58 @@ export class OpenAIProvider implements LLMProvider {
   /** Parse <tool_call> blocks from model text output. */
   private _parseTextToolCalls(text: string): ContentBlock[] {
     const results: ContentBlock[] = [];
-    const re = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g;
-    let match;
     let counter = 0;
 
-    while ((match = re.exec(text)) !== null) {
-      try {
-        const parsed = JSON.parse(match[1]);
-        const name = parsed.name || parsed.function || "";
-        const args = parsed.arguments || parsed.params || parsed.input || {};
-        if (name) {
-          results.push({
-            type: "tool_use",
-            id: "text_tc_" + (++counter),
-            name,
-            input: typeof args === "string" ? JSON.parse(args) : args,
-          });
-        }
-      } catch {
-        // Invalid JSON in tool_call block — skip
+    // Pattern 1: <tool_call>{"name":"...","arguments":{...}}</tool_call>
+    const re1 = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g;
+    let match;
+    while ((match = re1.exec(text)) !== null) {
+      const parsed = this._tryParseToolJson(match[1], ++counter);
+      if (parsed) results.push(parsed);
+    }
+
+    // Pattern 2: ```tool_call\n{"name":"...","arguments":{...}}\n```
+    const re2 = /```(?:tool_call|json)?\s*\n\s*(\{[\s\S]*?\})\s*\n\s*```/g;
+    while ((match = re2.exec(text)) !== null) {
+      if (results.length > 0) continue; // Already found tool calls
+      const parsed = this._tryParseToolJson(match[1], ++counter);
+      if (parsed) results.push(parsed);
+    }
+
+    // Pattern 3: Raw JSON that looks like a tool call (entire content is JSON)
+    if (results.length === 0) {
+      const trimmed = text.trim();
+      if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+        const parsed = this._tryParseToolJson(trimmed, ++counter);
+        if (parsed) results.push(parsed);
       }
     }
 
     return results;
+  }
+
+  /** Try to parse a JSON string as a tool call. */
+  private _tryParseToolJson(json: string, counter: number): ContentBlock | null {
+    try {
+      const parsed = JSON.parse(json);
+      // Extract name — handle various formats
+      let name = parsed.name || parsed.function || parsed.tool || "";
+      // Clean up names like "bash run a command" → "bash"
+      if (name.includes(" ")) name = name.split(" ")[0];
+
+      const args = parsed.arguments || parsed.params || parsed.input || parsed.parameters || {};
+      if (name) {
+        return {
+          type: "tool_use",
+          id: "text_tc_" + counter,
+          name,
+          input: typeof args === "string" ? JSON.parse(args) : args,
+        };
+      }
+    } catch {
+      // Invalid JSON — skip
+    }
+    return null;
   }
 
   /** Merge consecutive same-role messages to enforce user/assistant alternation. */
