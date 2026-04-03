@@ -123,6 +123,8 @@ export class OpenAIProvider implements LLMProvider {
     return this._createWithModel(model, system, messages, tools, maxTokens);
   }
 
+  private _textToolMode = false; // Auto-detected: true = tools in prompt, parse from text
+
   private async _createWithModel(
     model: string,
     system: string,
@@ -131,16 +133,17 @@ export class OpenAIProvider implements LLMProvider {
     maxTokens: number
   ): Promise<LLMResponse> {
     const converted = this._convertMessages(messages);
+
+    // Build system prompt — embed tools as text for models without native tool calling
+    let effectiveSystem = system;
+    if (this._textToolMode && tools.length > 0) {
+      effectiveSystem = system + "\n\n" + this._buildTextToolPrompt(tools);
+    }
+
     const openaiMessages: OpenAI.ChatCompletionMessageParam[] = [
-      { role: "system", content: system },
+      { role: "system", content: effectiveSystem },
       ...converted,
     ];
-
-    // Debug: log messages being sent
-    for (const m of converted) {
-      const preview = typeof m.content === "string" ? m.content?.substring(0, 60) : JSON.stringify(m.content)?.substring(0, 60);
-      console.log(`[openai] msg: role=${m.role}, content=${preview}, tool_calls=${(m as any).tool_calls?.length || 0}, tool_call_id=${(m as any).tool_call_id || ""}`);
-    }
 
     const params: OpenAI.ChatCompletionCreateParams = {
       model,
@@ -148,7 +151,8 @@ export class OpenAIProvider implements LLMProvider {
       max_tokens: maxTokens,
     };
 
-    if (tools.length > 0) {
+    // Only pass tools via API if not in text-tool mode
+    if (!this._textToolMode && tools.length > 0) {
       params.tools = tools.map((t) => ({
         type: "function" as const,
         function: {
@@ -175,12 +179,13 @@ export class OpenAIProvider implements LLMProvider {
     }
 
     const content: ContentBlock[] = [];
+    let hasToolCalls = false;
 
-    if (choice.message.content) {
-      content.push({ type: "text", text: choice.message.content });
-    }
-
-    if (choice.message.tool_calls) {
+    if (choice.message.tool_calls && choice.message.tool_calls.length > 0) {
+      // Native tool calling worked
+      if (choice.message.content) {
+        content.push({ type: "text", text: choice.message.content });
+      }
       for (const tc of choice.message.tool_calls) {
         let input: Record<string, unknown> = {};
         try {
@@ -195,11 +200,41 @@ export class OpenAIProvider implements LLMProvider {
           input,
         });
       }
+      hasToolCalls = true;
+    } else if (choice.message.content) {
+      // Check for text-based tool calls: <tool_call>{"name":"...","arguments":{...}}</tool_call>
+      const textToolCalls = this._parseTextToolCalls(choice.message.content);
+
+      if (textToolCalls.length > 0) {
+        // Extract non-tool-call text
+        const cleanText = choice.message.content
+          .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, "")
+          .trim();
+        if (cleanText) {
+          content.push({ type: "text", text: cleanText });
+        }
+        for (const tc of textToolCalls) {
+          content.push(tc);
+        }
+        hasToolCalls = true;
+
+        // Model used text tool calls — enable text-tool mode for future calls
+        if (!this._textToolMode) {
+          this._textToolMode = true;
+        }
+      } else if (!this._textToolMode && tools.length > 0 && !choice.message.content.includes("```")) {
+        // First call returned no tool calls at all — switch to text-tool mode
+        // (the model likely doesn't support native tool calling)
+        this._textToolMode = true;
+        // Re-try with tools in the system prompt
+        return this._createWithModel(model, system, messages, tools, maxTokens);
+      } else {
+        content.push({ type: "text", text: choice.message.content });
+      }
     }
 
-    const hasToolCalls =
-      choice.finish_reason === "tool_calls" ||
-      (choice.message.tool_calls && choice.message.tool_calls.length > 0);
+    hasToolCalls = hasToolCalls ||
+      choice.finish_reason === "tool_calls";
 
     return {
       content,
@@ -405,6 +440,54 @@ export class OpenAIProvider implements LLMProvider {
     // Enforce user/assistant alternation — merge consecutive same-role messages
     // Gemini rejects non-alternating sequences
     return this._enforceAlternation(result);
+  }
+
+  /** Build tool definitions as text for the system prompt (fallback for models without native tool calling). */
+  private _buildTextToolPrompt(tools: ToolDefinition[]): string {
+    let prompt = "## Available Tools\n\n";
+    prompt += "When you want to use a tool, output a tool_call block in your response:\n\n";
+    prompt += "```\n<tool_call>\n{\"name\": \"tool_name\", \"arguments\": {\"param\": \"value\"}}\n</tool_call>\n```\n\n";
+    prompt += "You can call multiple tools in one response. After each tool call, you will receive the result.\n\n";
+    prompt += "Tools:\n\n";
+
+    for (const t of tools) {
+      const params = t.input_schema.properties
+        ? Object.entries(t.input_schema.properties as Record<string, any>)
+            .map(([k, v]) => `  - ${k} (${v.type || "string"}${(t.input_schema.required || []).includes(k) ? ", required" : ""}): ${v.description || ""}`)
+            .join("\n")
+        : "  (no parameters)";
+      prompt += `### ${t.name}\n${t.description}\nParameters:\n${params}\n\n`;
+    }
+
+    return prompt;
+  }
+
+  /** Parse <tool_call> blocks from model text output. */
+  private _parseTextToolCalls(text: string): ContentBlock[] {
+    const results: ContentBlock[] = [];
+    const re = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g;
+    let match;
+    let counter = 0;
+
+    while ((match = re.exec(text)) !== null) {
+      try {
+        const parsed = JSON.parse(match[1]);
+        const name = parsed.name || parsed.function || "";
+        const args = parsed.arguments || parsed.params || parsed.input || {};
+        if (name) {
+          results.push({
+            type: "tool_use",
+            id: "text_tc_" + (++counter),
+            name,
+            input: typeof args === "string" ? JSON.parse(args) : args,
+          });
+        }
+      } catch {
+        // Invalid JSON in tool_call block — skip
+      }
+    }
+
+    return results;
   }
 
   /** Merge consecutive same-role messages to enforce user/assistant alternation. */
