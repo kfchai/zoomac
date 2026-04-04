@@ -96,7 +96,8 @@ async def run_bash(deps: ZoomacDeps, command: str, timeout: int = 0) -> str:
     # If default (0), auto-background after 10s
     explicit_timeout = timeout > 0
     timeout_sec = timeout / 1000 if explicit_timeout else 120
-    bg_threshold = timeout_sec if explicit_timeout else 10
+    is_sleep_wait = any(w in command for w in ("sleep", "wait", "watch"))
+    bg_threshold = timeout_sec if (explicit_timeout or is_sleep_wait) else 60
 
     try:
         # Try foreground first with short timeout

@@ -211,10 +211,34 @@
     autoResizeInput();
   }
 
+  // ===== Input history (arrow up/down) =====
+  const inputHistory = [];
+  let historyIndex = -1;
+
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
+      const text = input.value.trim();
+      if (text) {
+        inputHistory.push(text);
+        historyIndex = inputHistory.length;
+      }
       sendCurrentInput();
+    } else if (e.key === "ArrowUp" && input.value === "" && inputHistory.length > 0) {
+      e.preventDefault();
+      if (historyIndex > 0) historyIndex--;
+      input.value = inputHistory[historyIndex] || "";
+      autoResizeInput();
+    } else if (e.key === "ArrowDown" && historyIndex >= 0) {
+      e.preventDefault();
+      historyIndex++;
+      if (historyIndex >= inputHistory.length) {
+        historyIndex = inputHistory.length;
+        input.value = "";
+      } else {
+        input.value = inputHistory[historyIndex] || "";
+      }
+      autoResizeInput();
     }
   });
 
@@ -919,6 +943,7 @@
   // Design: compact summaries in chat, click to open full content in VS Code
 
   let _toolOutputCounter = 0;
+  let _codeBlockCounter = 0;
   function nextToolId() {
     return (++_toolOutputCounter).toString(36);
   }
@@ -1192,7 +1217,8 @@
       // Code block fences
       if (line.trimStart().startsWith("```")) {
         if (inCodeBlock) {
-          output.push(`<pre>${escapeHtml(codeBlockContent.join("\n"))}</pre>`);
+          const codeId = "code_" + (++_codeBlockCounter);
+          output.push(`<div class="code-block-wrapper"><pre id="${codeId}">${escapeHtml(codeBlockContent.join("\n"))}</pre><button class="copy-btn" data-code-id="${codeId}" title="Copy">📋</button></div>`);
           codeBlockContent = [];
           inCodeBlock = false;
         } else {
@@ -1522,7 +1548,7 @@
     });
   }
 
-  // Handle file link clicks
+  // Handle file link clicks + copy buttons
   messagesEl.addEventListener("click", (e) => {
     const link = e.target.closest(".file-link");
     if (link) {
@@ -1531,6 +1557,43 @@
       if (path) {
         vscode.postMessage({ type: "open_file", path });
       }
+      return;
+    }
+
+    // Copy button on code blocks
+    const copyBtn = e.target.closest(".copy-btn");
+    if (copyBtn) {
+      const codeId = copyBtn.getAttribute("data-code-id");
+      const codeEl = document.getElementById(codeId);
+      if (codeEl) {
+        navigator.clipboard.writeText(codeEl.textContent || "").then(() => {
+          copyBtn.textContent = "✅";
+          setTimeout(() => { copyBtn.textContent = "📋"; }, 1500);
+        });
+      }
+      return;
+    }
+
+    // Retry button
+    const retryBtn = e.target.closest(".retry-btn");
+    if (retryBtn) {
+      const lastUserMsg = [...chatHistory].reverse().find((m) => m.type === "user");
+      if (lastUserMsg) {
+        vscode.postMessage({ type: "send", content: lastUserMsg.content });
+      }
+      return;
+    }
+  });
+
+  // ===== @file mentions =====
+  input.addEventListener("input", () => {
+    autoResizeInput();
+    // Detect @file pattern and show autocomplete hint
+    const text = input.value;
+    const atMatch = text.match(/@([\w./\\-]*)$/);
+    if (atMatch && atMatch[1].length > 0) {
+      // Send request to extension for file suggestions
+      vscode.postMessage({ type: "file_suggest", query: atMatch[1] });
     }
   });
 })();

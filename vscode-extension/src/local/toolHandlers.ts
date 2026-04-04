@@ -163,9 +163,12 @@ function runBash(workspaceRoot: string): ToolHandler {
     const command = input.command as string;
     const explicitTimeout = input.timeout != null;
     const timeout = (input.timeout as number) || 120000;
-    // Only auto-background if no explicit timeout was set
-    // If agent sets timeout (e.g., for sleep+read), respect it as foreground
-    const bgThreshold = explicitTimeout ? timeout : 10000;
+
+    // Don't auto-background sleep/wait commands — they're intentional delays
+    const isSleepWait = /\b(sleep|wait|watch)\b/.test(command);
+
+    // 60s foreground threshold (up from 10s), skip backgrounding for sleep/wait or explicit timeout
+    const bgThreshold = (explicitTimeout || isSleepWait) ? timeout : 60000;
 
     return new Promise<string>((resolve) => {
       let settled = false;

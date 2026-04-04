@@ -142,8 +142,10 @@ export class ChatPanel {
         this._toggleMode();
       } else if (data.type === "stop") {
         (this._backend as any)?.cancel?.() || this._backend?.stop();
+      } else if (data.type === "file_suggest" && data.query) {
+        // @file autocomplete — inject file content
+        this._handleFileAtMention(data.query);
       } else if (data.type === "save_history") {
-        // Webview sends its current message list for persistence
         this._messages = data.messages || [];
         this._persistSession();
       }
@@ -381,6 +383,10 @@ export class ChatPanel {
 
     this._backend.onMessage((msg) => {
       this._postToWebview(msg);
+      // Notify when agent finishes (user may have switched tabs)
+      if ((msg as any).type === "agent" && !this._panel.visible) {
+        vscode.window.showInformationMessage("Zoomac: Task completed ✅");
+      }
     });
 
     await this._backend.start();
@@ -390,6 +396,23 @@ export class ChatPanel {
       this._backend.restoreHistory?.(savedMessages);
       ChatPanel._log?.appendLine(`[createBackend] restored ${savedMessages.length} messages to new backend`);
     }
+  }
+
+  /** Handle @file mention — read the file and inject its content into the message */
+  private async _handleFileAtMention(query: string): Promise<void> {
+    try {
+      const folders = vscode.workspace.workspaceFolders;
+      if (!folders) return;
+      const pattern = `**/${query}*`;
+      const files = await vscode.workspace.findFiles(pattern, "**/node_modules/**", 10);
+      if (files.length > 0) {
+        const suggestions = files.map((f) => vscode.workspace.asRelativePath(f));
+        this._postToWebview({
+          type: "file_suggestions",
+          suggestions,
+        } as any);
+      }
+    } catch {}
   }
 
   private async _toggleMode(): Promise<void> {

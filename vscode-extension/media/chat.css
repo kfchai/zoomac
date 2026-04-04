@@ -1044,6 +1044,62 @@ body.drag-over::after {
   opacity: 0.8;
 }
 
+/* ===== Code block copy button ===== */
+.code-block-wrapper {
+  position: relative;
+}
+
+.code-block-wrapper pre {
+  margin: 0;
+}
+
+.copy-btn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 3px;
+  background: rgba(255,255,255,0.08);
+  color: var(--z-fg-muted);
+  cursor: pointer;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.code-block-wrapper:hover .copy-btn {
+  opacity: 1;
+}
+
+.copy-btn:hover {
+  background: rgba(255,255,255,0.15);
+}
+
+/* ===== Retry button ===== */
+.retry-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--z-fg-muted);
+  font-size: 11px;
+  cursor: pointer;
+  margin-top: 4px;
+}
+
+.retry-btn:hover {
+  background: rgba(255,255,255,0.06);
+  color: var(--z-fg);
+}
+
 /* ===== Separator ===== */
 .msg-separator {
   height: 1px;
