@@ -623,11 +623,9 @@ export class LocalAgentBackend implements Backend {
     } as WebviewMessage);
 
     try {
-      this._log(`[sendMessage] "${content.substring(0, 80)}", model=${this._model}, messages=${this._messages.length}`);
       await this._injectMemoryContext(content);
       await this._runToolLoop();
     } catch (err: unknown) {
-      this._log(`[sendMessage] ERROR: ${err}`);
       this._emitter.fire({
         type: "spinner",
         text: "",
@@ -687,16 +685,11 @@ export class LocalAgentBackend implements Backend {
       const enableThinking = iteration === 0;
 
       // Call LLM
-      this._log(`[toolLoop] iteration=${iteration}, calling provider...`);
       let response: LLMResponse;
       try {
         response = await this._callProviderStreaming(onStreamEvent, enableThinking);
-        this._log(`[toolLoop] response: stopReason=${response.stopReason}, blocks=${response.content.length}, streamStarted=${streamStarted}`);
-        for (const b of response.content) {
-          this._log(`[toolLoop]   block: type=${b.type}, text=${b.text?.substring(0, 80) || ""}, name=${b.name || ""}`);
-        }
       } catch (err: unknown) {
-        this._log(`[toolLoop] ERROR: ${err}`);
+        this._log(`[error] tool loop: ${err}`);
         throw err;
       }
 
@@ -725,11 +718,8 @@ export class LocalAgentBackend implements Backend {
           const textParts = response.content
             .filter((b) => b.type === "text" && b.text)
             .map((b) => b.text!);
-          this._log(`[toolLoop] final text parts: ${textParts.length}, total chars: ${textParts.join("").length}`);
           if (textParts.length > 0) {
             this._emitter.fire({ type: "agent", content: textParts.join("\n") });
-          } else {
-            this._log(`[toolLoop] WARNING: no text in response and no tool calls`);
           }
         }
 
@@ -957,68 +947,7 @@ export class LocalAgentBackend implements Backend {
 
   private _currentSystemPrompt = "";
 
-  private async _callProvider(): Promise<LLMResponse> {
-    const systemPrompt = this._currentSystemPrompt || this._baseSystemPrompt;
-
-    const provider = this._provider as {
-      createMessageWithModel?: (
-        model: string,
-        system: string,
-        messages: ConversationMessage[],
-        tools: ToolDefinition[],
-        maxTokens: number
-      ) => Promise<LLMResponse>;
-      createMessage: (
-        system: string,
-        messages: ConversationMessage[],
-        tools: ToolDefinition[],
-        maxTokens: number
-      ) => Promise<LLMResponse>;
-    };
-
-    const call = () =>
-      provider.createMessageWithModel
-        ? provider.createMessageWithModel(
-            this._model, systemPrompt, this._messages, TOOL_DEFINITIONS, this._maxTokens
-          )
-        : provider.createMessage(
-            systemPrompt, this._messages, TOOL_DEFINITIONS, this._maxTokens
-          );
-
-    // Retry with backoff on rate limit (429)
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        return await call();
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        const status = (err as { status?: number }).status;
-
-        if (status === 429 || msg.includes("rate_limit") || msg.includes("429")) {
-          // Parse retry-after or use exponential backoff
-          const waitSec = Math.pow(2, attempt + 1) * 5; // 10s, 20s, 40s
-          this._emitter.fire({
-            type: "spinner",
-            text: `Rate limited — waiting ${waitSec}s...`,
-            active: true,
-          } as WebviewMessage);
-          await new Promise((r) => setTimeout(r, waitSec * 1000));
-          continue;
-        }
-
-        // Log full error details for debugging
-        const errBody = (err as any)?.error?.message || (err as any)?.response?.data || (err as any)?.body || "";
-        if (status === 400) {
-          throw new Error(`API error 400: ${msg}${errBody ? ` — ${JSON.stringify(errBody)}` : ""}`);
-        }
-
-        throw err;
-      }
-    }
-
-    throw new Error("Rate limit: max retries exceeded. Try again in a minute.");
-  }
-
-  /** Streaming version of _callProvider — emits text_delta events as tokens arrive */
+  /** Call LLM provider with streaming, rate limit retry, and tool calling */
   private async _callProviderStreaming(
     onEvent: (event: import("../local/providers/types").StreamEvent) => void,
     enableThinking = true

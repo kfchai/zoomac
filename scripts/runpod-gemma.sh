@@ -1,5 +1,5 @@
 #!/bin/bash
-# Connect to RunPod Gemma 4 26B — auto-starts Ollama if needed
+# Connect to RunPod vLLM — auto-starts if needed
 # Usage: bash scripts/runpod-gemma.sh
 
 HOST="root@213.173.111.17"
@@ -14,45 +14,34 @@ if ! $SSH "echo ok" 2>/dev/null; then
 fi
 echo "✅ Connected to RunPod"
 
-echo "🔍 Checking if Ollama is running..."
-OLLAMA_STATUS=$($SSH "curl -s http://localhost:11434/api/tags 2>/dev/null")
-
-if echo "$OLLAMA_STATUS" | grep -q "gemma4"; then
-    echo "✅ Gemma 4 26B is already loaded"
+echo "🔍 Checking if vLLM is running..."
+if $SSH "curl -s --max-time 3 http://localhost:8000/v1/models 2>/dev/null" | grep -q "gemma"; then
+    echo "✅ vLLM is already running"
+    $SSH "curl -s http://localhost:8000/v1/models 2>/dev/null | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d[\"data\"][0][\"id\"])' 2>/dev/null"
 else
-    echo "🚀 Starting Ollama..."
-    $SSH "export OLLAMA_MODELS=/workspace/ollama_models && export OLLAMA_HOST=0.0.0.0 && pkill ollama 2>/dev/null; sleep 1 && nohup ollama serve > /workspace/ollama.log 2>&1 &"
-    echo "⏳ Waiting for Ollama to start..."
-    sleep 3
+    echo "🚀 Starting vLLM..."
+    $SSH "nohup /workspace/start_vllm.sh >/workspace/vllm.log 2>&1 &"
 
-    # Verify
-    RETRY=0
-    while [ $RETRY -lt 10 ]; do
-        if $SSH "curl -s http://localhost:11434/api/tags 2>/dev/null" | grep -q "models"; then
-            echo "✅ Ollama is running"
+    echo "⏳ Waiting for vLLM (model loading takes a few minutes)..."
+    for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+        sleep 10
+        if $SSH "curl -s --max-time 3 http://localhost:8000/v1/models 2>/dev/null" | grep -q "model"; then
+            echo "✅ vLLM is running"
             break
         fi
-        RETRY=$((RETRY + 1))
-        echo "   Waiting... ($RETRY/10)"
-        sleep 2
+        echo "   Loading... ($((i*10))s)"
     done
-
-    if [ $RETRY -eq 10 ]; then
-        echo "❌ Ollama failed to start. Check /workspace/ollama.log"
-        exit 1
-    fi
 fi
 
-# Check GPU
+# Show GPU
 echo ""
 $SSH "nvidia-smi --query-gpu=name,memory.used,memory.total,temperature.gpu --format=csv,noheader" 2>/dev/null
 echo ""
 
-echo "🔗 Starting SSH tunnel: localhost:11434 → RunPod Ollama"
-echo "   Use in Zoomac: provider=ollama, model=gemma4:26b, baseUrl=http://localhost:11434/v1"
+echo "🔗 Starting SSH tunnel: localhost:8000 → RunPod vLLM"
+echo "   Zoomac: provider=openai, model=google/gemma-4-e4b-it, baseUrl=http://localhost:8000/v1"
 echo ""
 echo "   Press Ctrl+C to disconnect"
 echo ""
 
-# Start tunnel (foreground — blocks until Ctrl+C)
-ssh -L 11434:localhost:11434 $HOST -p $PORT -i $KEY -N
+ssh -L 8000:localhost:8000 $HOST -p $PORT -i $KEY -N
